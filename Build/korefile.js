@@ -74,4 +74,8 @@ project.addDefine('WIN32_LEAN_AND_MEAN=1');
 project.addDefine('_WIN32_WINNT=0x0A00');
 project.addDefine('WINVER=0x0A00');
 
+project.addLib('Rpcrt4');
+project.addLib('Mincore');
+project.addLib('XmlLite');
+
 resolve(project);
