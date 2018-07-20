@@ -22,7 +22,7 @@
 extern HANDLE g_hInstance;
 static ATOM  lockedDll = 0;
 
-static BOOL AttachProcess(HANDLE hmod)
+BOOL AttachProcess(HANDLE hmod)
 {
     if (!ThreadContextTLSEntry::InitializeProcess())
     {
