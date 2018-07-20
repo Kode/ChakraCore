@@ -12,7 +12,7 @@ ifdef _CONTROL_FLOW_GUARD
 endif
 extrn __chkstk: PROC
 
-ifdef _ENABLE_DYNAMIC_THUNKS
+; ifdef _ENABLE_DYNAMIC_THUNKS
 
 ;;============================================================================================================
 ;; InterpreterStackFrame::DelayDynamicInterpreterThunk
@@ -160,7 +160,7 @@ endif
         rex_jmp_reg rax
 ?EnsureDynamicProfileInfoThunk@DynamicProfileInfo@Js@@SAPEAXPEAVRecyclableObject@2@UCallInfo@2@ZZ ENDP
 
-endif ;; _ENABLE_DYNAMIC_THUNKS
+; endif ;; _ENABLE_DYNAMIC_THUNKS
 
 ;;============================================================================================================
 ;; ScriptContext::ProfileModeDeferredParsingThunk
@@ -254,7 +254,7 @@ endif
         rex_jmp_reg rax
 ?ProfileModeDeferredDeserializeThunk@ScriptContext@Js@@SAPEAXPEAVRecyclableObject@2@UCallInfo@2@ZZ ENDP
 
-ifdef _ENABLE_DYNAMIC_THUNKS
+; ifdef _ENABLE_DYNAMIC_THUNKS
 
 ;;============================================================================================================
 ;; Js::AsmJsInterpreterThunk
@@ -553,7 +553,7 @@ endif
 
 ;;============================================================================================================
 
-endif ;; _ENABLE_DYNAMIC_THUNKS
+; endif ;; _ENABLE_DYNAMIC_THUNKS
 
 ;;============================================================================================================
 
