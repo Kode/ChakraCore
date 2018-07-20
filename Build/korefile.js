@@ -56,7 +56,12 @@ project.addIncludeDirs(
 	'../lib/Runtime/Base',
 	'../bin/ChakraCore',
 	'../bin/NativeTests',
-	'../bin/External'
+	'../bin/External',
+	'../lib/Runtime/PlatformAgnostic',
+	'../lib/Common/Memory',
+	'../lib/Runtime/Language',
+	'../lib/wabt',
+	'../lib/wabt/chakra/windows'
 );
 
 project.addDefine('_UNICODE');
@@ -77,5 +82,6 @@ project.addDefine('WINVER=0x0A00');
 project.addLib('Rpcrt4');
 project.addLib('Mincore');
 project.addLib('XmlLite');
+project.addLib('Dbghelp');
 
 resolve(project);
