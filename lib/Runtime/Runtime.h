@@ -329,7 +329,7 @@ const Js::ModuleID kmodGlobal = 0;
 
 class SourceContextInfo;
 
-#if defined(ENABLE_SCRIPT_DEBUGGING) && defined(_WIN32)
+#if defined(ENABLE_SCRIPT_DEBUGGING) && defined(_WIN32) && defined(KORE_WINDOWS)
 #include "activdbg100.h"
 #else
 #define SCRIPT_E_RECORDED                _HRESULT_TYPEDEF_(0x86664004L)

@@ -307,17 +307,17 @@ public:
         LargeBlockType,
 
 #ifdef RECYCLER_VISITED_HOST
-        SmallAllocBlockTypeCount = 7, // Actual number of types for blocks containing small allocations
+        SmallAllocBlockTypeCount = 7 - 2, // Actual number of types for blocks containing small allocations
 #else
         SmallAllocBlockTypeCount = 6,
 #endif
 
 #ifdef RECYCLER_VISITED_HOST
-        MediumAllocBlockTypeCount = 6, // Actual number of types for blocks containing medium allocations
+        MediumAllocBlockTypeCount = 6 - 2, // Actual number of types for blocks containing medium allocations
 #else
         MediumAllocBlockTypeCount = 5,
 #endif
-
+		
         SmallBlockTypeCount = SmallAllocBlockTypeCount + MediumAllocBlockTypeCount,      // Distinct block types independent of allocation size using SmallHeapBlockT
         LargeBlockTypeCount = 1, // There is only one LargeBlockType
 

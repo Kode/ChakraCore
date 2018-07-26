@@ -11,7 +11,7 @@ namespace Js
     {
     private:
         DEFINE_VTABLE_CTOR(CrossSiteObject<T>, T);
-
+		
     public:
         virtual PropertyQueryFlags GetPropertyQuery(Var originalInstance, PropertyId propertyId, Var* value, PropertyValueInfo* info, ScriptContext* requestContext) override;
         virtual PropertyQueryFlags GetPropertyQuery(Var originalInstance, JavascriptString* propertyNameString, Var* value, PropertyValueInfo* info, ScriptContext* requestContext) override;

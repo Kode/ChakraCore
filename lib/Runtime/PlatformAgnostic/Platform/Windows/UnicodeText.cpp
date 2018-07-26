@@ -9,6 +9,7 @@
 
 #include <windows.h>
 #include "Runtime.h"
+#if 0
 #ifdef NTBUILD
 #include "Windows.Globalization.h"
 #else
@@ -425,3 +426,4 @@ namespace PlatformAgnostic
 #endif // HAS_ICU
     };
 };
+#endif

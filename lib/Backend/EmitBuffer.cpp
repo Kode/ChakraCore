@@ -409,7 +409,7 @@ bool EmitBufferManager<TAlloc, TPreReservedAlloc, SyncObject>::CommitBufferForIn
         return false;
     }
 
-    FlushInstructionCache(this->processHandle, pBuffer, bufferSize);
+    //**FlushInstructionCache(this->processHandle, pBuffer, bufferSize);
 
     return true;
 }
@@ -515,7 +515,7 @@ EmitBufferManager<TAlloc, TPreReservedAlloc, SyncObject>::CommitBuffer(TEmitBuff
         }
     }
 
-    FlushInstructionCache(this->processHandle, bufferToFlush, sizeToFlush);
+    //**FlushInstructionCache(this->processHandle, bufferToFlush, sizeToFlush);
 #if DBG_DUMP
     this->totalBytesCode += bytes;
 #endif

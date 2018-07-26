@@ -174,8 +174,9 @@ namespace Js
             ~AutoObjectArrayItemExistsValidator();
         };
 
-    private:
+    public:
         DEFINE_VTABLE_CTOR(ES5HeapArgumentsObject, HeapArgumentsObject);
+	private:
         DEFINE_MARSHAL_OBJECT_TO_SCRIPT_CONTEXT(ES5HeapArgumentsObject);
         uint32 GetNextFormalArgIndexHelper(uint32 index, BOOL enumNonEnumerable, PropertyAttributes* attributes = nullptr) const;
 

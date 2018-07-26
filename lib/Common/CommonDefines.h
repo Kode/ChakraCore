@@ -96,7 +96,7 @@
 #define CONFIG_PARSE_CONFIG_FILE 1
 
 #ifdef _WIN32
-#define CONFIG_CONSOLE_AVAILABLE 1
+#define CONFIG_CONSOLE_AVAILABLE 0
 #define CONFIG_RICH_TRACE_FORMAT 1
 #else
 #define CONFIG_CONSOLE_AVAILABLE 0
@@ -107,7 +107,7 @@
 #define VARIABLE_INT_ENCODING 1                     // Byte code serialization variable size int field encoding
 #define BYTECODE_BRANCH_ISLAND                      // Byte code short branch and branch island
 #if defined(_WIN32) || defined(HAS_REAL_ICU)
-#define ENABLE_UNICODE_API 1                        // Enable use of Unicode-related APIs
+//#define ENABLE_UNICODE_API 1                        // Enable use of Unicode-related APIs
 #endif
 
 // Normalize ICU_VERSION for non-Kit ICU
@@ -139,7 +139,7 @@
 #define INTL_WINGLOB 1
 #endif
 
-#define ENABLE_ES6_CHAR_CLASSIFIER                  // ES6 Unicode character classifier support
+//#define ENABLE_ES6_CHAR_CLASSIFIER                  // ES6 Unicode character classifier support
 
 // Type system features
 #define PERSISTENT_INLINE_CACHES                    // *** TODO: Won't build if disabled currently
@@ -156,7 +156,7 @@
 // xplat-todo: revisit these features
 #ifdef _WIN32
 // dep: TIME_ZONE_INFORMATION, DaylightTimeHelper, Windows.Globalization
-#define ENABLE_GLOBALIZATION
+//#define ENABLE_GLOBALIZATION
 // #ifndef __clang__
 // xplat-todo: change DISABLE_SEH to ENABLE_SEH and move here
 // #endif
@@ -183,9 +183,9 @@
 
 
 #ifndef ENABLE_VALGRIND
-#define ENABLE_CONCURRENT_GC 1
+#define ENABLE_CONCURRENT_GC 0
 #ifdef _WIN32
-#define ENABLE_ALLOCATIONS_DURING_CONCURRENT_SWEEP 1 // Needs ENABLE_CONCURRENT_GC to be enabled for this to be enabled.
+#define ENABLE_ALLOCATIONS_DURING_CONCURRENT_SWEEP 0 // Needs ENABLE_CONCURRENT_GC to be enabled for this to be enabled.
 #else
 #define ENABLE_ALLOCATIONS_DURING_CONCURRENT_SWEEP 0 // Needs ENABLE_CONCURRENT_GC to be enabled for this to be enabled.
 #endif
@@ -555,7 +555,7 @@
 #define PROFILE_BAILOUT_RECORD_MEMORY
 #define MEMSPECT_TRACKING
 
-#define PROFILE_RECYCLER_ALLOC
+//#define PROFILE_RECYCLER_ALLOC
 // Needs to compile in debug mode
 // Just needs strings converted
 #define PROFILE_DICTIONARY 1
@@ -565,7 +565,7 @@
 #define RECYCLER_SLOW_CHECK_ENABLED          // This can be disabled to speed up the debug build's GC
 #define RECYCLER_STRESS
 #define RECYCLER_STATS
-#define RECYCLER_FINALIZE_CHECK
+//#define RECYCLER_FINALIZE_CHECK
 #define RECYCLER_FREE_MEM_FILL
 #define RECYCLER_DUMP_OBJECT_GRAPH
 #define RECYCLER_MEMORY_VERIFY
@@ -592,9 +592,9 @@
 #endif
 #endif
 
-#define HEAP_TRACK_ALLOC
-#define CHECK_MEMORY_LEAK
-#define LEAK_REPORT
+//#define HEAP_TRACK_ALLOC
+//#define CHECK_MEMORY_LEAK
+//#define LEAK_REPORT
 
 #define PROJECTION_METADATA_TRACE
 #define ERROR_TRACE
@@ -770,7 +770,7 @@
 #endif
 
 #if defined(STACK_BACK_TRACE) || defined(CONTROL_FLOW_GUARD_LOGGER)
-#ifdef _WIN32
+#if defined(_WIN32) && defined(KORE_WINDOWS)
 #define DBGHELP_SYMBOL_MANAGER
 #endif
 #endif

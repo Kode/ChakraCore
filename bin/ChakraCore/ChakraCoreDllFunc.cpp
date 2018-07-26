@@ -2,6 +2,7 @@
 // Copyright (C) Microsoft. All rights reserved.
 // Licensed under the MIT license. See LICENSE.txt file in the project root for full license information.
 //-------------------------------------------------------------------------------------------------------
+#if 0
 #include "Runtime.h"
 #include "Core/AtomLockGuids.h"
 #include "Core/ConfigParser.h"
@@ -178,4 +179,6 @@ HRESULT JsInitializeJITServer(
 {
     return E_NOTIMPL;
 }
+#endif
+
 #endif

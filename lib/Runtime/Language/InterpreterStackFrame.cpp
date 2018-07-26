@@ -3689,10 +3689,10 @@ namespace Js
         RecyclableObject * function = OP_CallGetFunc(target);
 
 #if DBG
-        if (this->IsInDebugMode())
-        {
-            JavascriptFunction::CheckValidDebugThunk(scriptContext, function);
-        }
+        //**if (this->IsInDebugMode())
+        //**{
+        //**    JavascriptFunction::CheckValidDebugThunk(scriptContext, function);
+        //**}
 #endif
 
         if (playout->Return == Js::Constants::NoRegister)

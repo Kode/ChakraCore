@@ -752,7 +752,7 @@ bool DynamicProfileStorage::SetupCacheDir(__in_z char16 const * dirname)
     char16 tempPath[_MAX_PATH];
     if (dirname == nullptr)
     {
-        uint32 len = GetTempPath(_MAX_PATH, tempPath);
+		uint32 len = _MAX_PATH;// GetTempPath(_MAX_PATH, tempPath);
         if (len >= _MAX_PATH || wcscat_s(tempPath, _u("jsdpcache")) != 0)
         {
             DisableCacheDir();

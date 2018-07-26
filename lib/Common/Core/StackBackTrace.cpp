@@ -47,7 +47,7 @@ StackBackTrace::Print()
         retValue += Output::Print(_u("\n"));
     }
 #else
-    char** f = backtrace_symbols(this->stackBackTrace, this->framesCount);
+    /*char** f = backtrace_symbols(this->stackBackTrace, this->framesCount);
     if (f)
     {
         for (ULONG i = 0; i < this->framesCount; i++)
@@ -55,7 +55,7 @@ StackBackTrace::Print()
             retValue += Output::Print(_u(" %S\n"), f[i]);
         }
         free(f);
-    }
+    }*/
 #endif
 
     retValue += Output::Print(_u("\n"));

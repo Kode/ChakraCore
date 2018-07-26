@@ -6,8 +6,8 @@
 #ifdef _WIN32
 #include <psapi.h>
 #endif
-#include <wincrypt.h>
-#include <VersionHelpers.h>
+//**#include <wincrypt.h>
+//**#include <VersionHelpers.h>
 #ifdef __APPLE__
 #include <sys/sysctl.h> // sysctl*
 #elif defined(__linux__)
@@ -63,6 +63,7 @@ AutoSystemInfo::IsLowMemoryDevice()
 void
 AutoSystemInfo::Initialize()
 {
+#ifndef KORE_CONSOLE
     Assert(!initialized);
 #ifndef _WIN32
     PAL_InitializeChakraCore();
@@ -122,12 +123,14 @@ AutoSystemInfo::Initialize()
     this->availableCommit = 0;
 
     ChakraBinaryAutoSystemInfoInit(this);
+#endif
 }
 
 
 bool
 AutoSystemInfo::InitPhysicalProcessorCount()
 {
+#ifndef KORE_CONSOLE
     DWORD countPhysicalProcessor = 0;
 #ifdef _WIN32
     DWORD size = 0;
@@ -202,7 +205,7 @@ AutoSystemInfo::InitPhysicalProcessorCount()
 #error "NOT Implemented"
 #endif
     this->dwNumberOfPhysicalProcessors = countPhysicalProcessor;
-
+#endif
     return true;
 }
 
@@ -402,7 +405,7 @@ LPCWSTR AutoSystemInfo::GetJscriptDllFileName()
     return (LPCWSTR)Data.binaryName;
 }
 
-#ifdef _WIN32
+#ifdef KORE_WINDOWS
 /* static */
 HMODULE AutoSystemInfo::GetCRTHandle()
 {
@@ -494,7 +497,7 @@ HRESULT AutoSystemInfo::GetJscriptFileVersion(DWORD* majorVersion, DWORD* minorV
 //
 HRESULT AutoSystemInfo::GetVersionInfo(__in LPCWSTR pszPath, DWORD* majorVersion, DWORD* minorVersion)
 {
-#ifdef _WIN32
+#ifdef KORE_WINDOWS
     DWORD   dwTemp;
     DWORD   cbVersionSz;
     HRESULT hr = E_FAIL;

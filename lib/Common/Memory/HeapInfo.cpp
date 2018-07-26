@@ -1058,7 +1058,7 @@ HeapInfo::Sweep(RecyclerSweep& recyclerSweep, bool concurrent)
 
     RECYCLER_PROFILE_EXEC_END(recycler, Js::SweepLargePhase);
     RECYCLER_SLOW_CHECK(VerifyLargeHeapBlockCount());
-    RECYCLER_SLOW_CHECK(Assert(this->newFinalizableObjectCount == 0));
+    //**RECYCLER_SLOW_CHECK(Assert(this->newFinalizableObjectCount == 0));
 }
 
 #if ENABLE_CONCURRENT_GC

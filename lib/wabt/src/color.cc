@@ -35,10 +35,12 @@ Color::Color(FILE* file, bool enabled) : file_(file) {
 
 // static
 bool Color::SupportsColor(FILE* file) {
+#ifndef KORE_CONSOLE
   char* force = getenv("FORCE_COLOR");
   if (force) {
     return atoi(force) != 0;
   }
+#endif
 
 #if _WIN32
 

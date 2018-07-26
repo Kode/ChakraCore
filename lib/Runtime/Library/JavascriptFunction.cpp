@@ -3475,7 +3475,7 @@ LABEL1:
         HRESULT hr = JitFromEncodedWorkItem(scriptContext->GetNativeCodeGenerator(), buffer, size);
         if (FAILED(hr))
         {
-#ifdef _WIN32
+#ifdef KORE_WINDOWS
             char16* lpMsgBuf = nullptr;
             DWORD bufLen = FormatMessageW(
                 FORMAT_MESSAGE_ALLOCATE_BUFFER |

@@ -4,7 +4,7 @@
 //-------------------------------------------------------------------------------------------------------
 #include "RuntimeLibraryPch.h"
 #ifndef USING_PAL_STDLIB
-#include <strsafe.h>
+//#include <strsafe.h>
 #endif
 #include "ByteCode/ByteCodeApi.h"
 #include "Exceptions/EvalDisabledException.h"

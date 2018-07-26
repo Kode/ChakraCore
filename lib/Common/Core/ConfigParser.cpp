@@ -8,7 +8,7 @@
 #include <io.h>
 #include <share.h>
 #include <fcntl.h>
-#include <strsafe.h>
+//#include <strsafe.h>
 #endif
 
 #include "Memory/MemoryLogger.h"
@@ -62,7 +62,7 @@ void ConfigParser::ParseOnModuleLoad(CmdLineArgsParser& parser, HANDLE hmod)
 
 void ConfigParser::ParseRegistry(CmdLineArgsParser &parser)
 {
-#ifdef _WIN32
+#ifdef KORE_WINDOWS
     HKEY hk;
     bool includeUserHive = true;
 
@@ -92,7 +92,7 @@ void ConfigParser::ParseRegistry(CmdLineArgsParser &parser)
 
 void ConfigParser::ParseRegistryKey(HKEY hk, CmdLineArgsParser &parser)
 {
-#ifdef _WIN32
+#ifdef KORE_WINDOWS
     DWORD dwSize;
     DWORD dwValue;
 
@@ -361,7 +361,7 @@ void ConfigParser::ParseConfig(HANDLE hmod, CmdLineArgsParser &parser, const cha
     {
         WCHAR configFileFullName[MAX_PATH];
 
-        StringCchPrintf(configFileFullName, MAX_PATH, _u("%s%s"), configFileName, configFileExt);
+        //**StringCchPrintf(configFileFullName, MAX_PATH, _u("%s%s"), configFileName, configFileExt);
 
         // try the one in the current working directory (Desktop)
         if (_wfullpath(filename, configFileFullName, _MAX_PATH) == nullptr)

@@ -68,7 +68,7 @@ StackProber::Initialize()
 
     Assert(stackBottom);
 
-#ifdef _WIN32
+#ifdef KORE_WINDOWS
     // Calling this API with stackGuarantee == 0 *gets* current stack guarantee.
     SetThreadStackGuarantee(&stackGuarantee);
 #endif

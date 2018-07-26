@@ -298,7 +298,7 @@ ServerScriptContext::GetDebugScriptIdWhenSetAddr() const
 intptr_t
 ServerScriptContext::GetChakraLibAddr() const
 {
-    return m_contextData.chakraLibAddr;
+	return 0;//** m_contextData.chakraLibAddr;
 }
 
 bool

@@ -6,7 +6,7 @@
 
 #if DBG_DUMP
 #ifndef USING_PAL_STDLIB
-#include <strsafe.h>
+//**#include <strsafe.h>
 #endif
 #include "Language/JavascriptStackWalker.h"
 
@@ -26,7 +26,7 @@ WCHAR* DumpCallStackFull(uint frameCount, bool print)
         if (walker.IsJavascriptFrame())
         {
             char16 debugStringBuffer[MAX_FUNCTION_BODY_DEBUG_STRING_SIZE];
-            StringCchPrintf(buffer, _countof(buffer), _u("0x%p  "), codeAddr);
+            //**StringCchPrintf(buffer, _countof(buffer), _u("0x%p  "), codeAddr);
             sb.AppendSz(buffer);
             // Found a JavascriptFunction.  Dump its name and parameters.
             Js::JavascriptFunction *jsFunc = walker.GetCurrentFunction();
@@ -37,16 +37,16 @@ WCHAR* DumpCallStackFull(uint frameCount, bool print)
             ULONG line = 0; LONG column = 0;
             walker.GetSourcePosition(&sourceFileName, &line, &column);
 
-            StringCchPrintf(buffer, _countof(buffer), _u("%s [%s] (0x%p, Args=%u"), jsBody->GetDisplayName(), jsBody->GetDebugNumberSet(debugStringBuffer), jsFunc,
-                callInfo.Count);
+            //**StringCchPrintf(buffer, _countof(buffer), _u("%s [%s] (0x%p, Args=%u"), jsBody->GetDisplayName(), jsBody->GetDebugNumberSet(debugStringBuffer), jsFunc,
+            //**    callInfo.Count);
             sb.AppendSz(buffer);
 
             for (uint i = 0; i < callInfo.Count; i++)
             {
-                StringCchPrintf(buffer, _countof(buffer), _u(", 0x%p"), walker.GetJavascriptArgs(false /*boxArgs*/)[i]);
+                //**StringCchPrintf(buffer, _countof(buffer), _u(", 0x%p"), walker.GetJavascriptArgs(false /*boxArgs*/)[i]);
                 sb.AppendSz(buffer);
             }
-            StringCchPrintf(buffer, _countof(buffer), _u(")[%s (%u, %d)]\n"), sourceFileName, line + 1, column + 1);
+            //**StringCchPrintf(buffer, _countof(buffer), _u(")[%s (%u, %d)]\n"), sourceFileName, line + 1, column + 1);
             sb.AppendSz(buffer);
             fc++;
             if(fc >= frameCount)

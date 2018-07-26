@@ -44,8 +44,8 @@
 #define EDGE_ETW_INTERNAL(s)
 #endif  // !NTBUILD
 
-#define JS_ETW(s) s
-#define IS_JS_ETW(s) s
+#define JS_ETW(s)
+#define IS_JS_ETW(s) 0
 
 #ifdef ENABLE_JS_LTTNG
 #include "jscriptEtw.h"
@@ -74,7 +74,7 @@ CompileAssert(false)
 #define MCGEN_PRIVATE_ENABLE_CALLBACK_V2(SourceId, ControlCode, Level, MatchAnyKeyword, MatchAllKeyword, FilterData, CallbackContext) \
        EtwCallback(ControlCode, CallbackContext)
 
-#include <microsoft-scripting-chakra-instrumentationevents.h>
+//#include <microsoft-scripting-chakra-instrumentationevents.h>
 #ifdef NTBUILD
 #include <ieresp_mshtml.h>
 #include <microsoft-scripting-jscript9.internalevents.h>

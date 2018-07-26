@@ -9,7 +9,7 @@
 // === C Runtime Header Files ===
 #pragma warning(push)
 #pragma warning(disable: 4995) /* 'function': name was marked as #pragma deprecated */
-#include <strsafe.h>
+//#include <strsafe.h>
 #pragma warning(pop)
 #endif
 
@@ -191,16 +191,17 @@ namespace Js {
 
         if (filePath == NULL)
         {
-            retVal = GetTempPath(MAX_PATH, tempFilePath);
+            /*retVal = GetTempPath(MAX_PATH, tempFilePath);
 
             if (retVal > MAX_PATH || (retVal == 0))
             {
                 return ret;
             }
-            filePath = tempFilePath;
+            filePath = tempFilePath;*/
+			return 0;
         }
 
-        StringCchPrintf(tempFileName, _countof(tempFileName), _u("%s\\CH_%u_%u.dmp"), filePath, GetCurrentProcessId(), GetCurrentThreadId());
+        //**StringCchPrintf(tempFileName, _countof(tempFileName), _u("%s\\CH_%u_%u.dmp"), filePath, GetCurrentProcessId(), GetCurrentThreadId());
         Output::Print(_u("dump filename %s \n"), tempFileName);
         Output::Flush();
 
@@ -294,8 +295,8 @@ namespace Js {
 #endif
         if (AssertsToConsole)
         {
-            fprintf(stderr, "ASSERTION %u: (%s, line %u) %s\n Failure: %s\n", GetCurrentProcessId(), fileName, lineNumber, message, error);
-            fflush(stderr);
+            //**fprintf(stderr, "ASSERTION %u: (%s, line %u) %s\n Failure: %s\n", GetCurrentProcessId(), fileName, lineNumber, message, error);
+            //**fflush(stderr);
 #ifdef GENERATE_DUMP
             // force dump if we have assert in jc.exe. check build only.
             if (!Js::Configuration::Global.flags.IsEnabled(Js::DumpOnCrashFlag))
@@ -310,7 +311,7 @@ namespace Js {
 
         // The following code is applicable only when we are hosted in an
         // GUI environment
-#if defined(ENABLE_DEBUG_CONFIG_OPTIONS) && defined(_WIN32)
+#if defined(ENABLE_DEBUG_CONFIG_OPTIONS) && defined(KORE_WINDOWS)
         // Then if DumpOncrashFlag is not specified it directly returns,
         // otherwise if will raise a non-continuable exception, generate the dump and terminate the process.
         // the popup message box might be useful when testing in IE

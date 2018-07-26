@@ -175,7 +175,7 @@ namespace DateTime
     // bring it inline with a time server.
     static double GetAdjustFactor()
     {
-        DWORD dwTimeAdjustment = 0;
+        /*DWORD dwTimeAdjustment = 0;
         DWORD dwTimeIncrement = 0;
         BOOL fAdjustmentDisabled = FALSE;
         BOOL fSuccess = GetSystemTimeAdjustment(&dwTimeAdjustment, &dwTimeIncrement, &fAdjustmentDisabled);
@@ -183,7 +183,8 @@ namespace DateTime
         {
             return 1;
         }
-        return ((double)dwTimeAdjustment) / ((double)dwTimeIncrement);
+        return ((double)dwTimeAdjustment) / ((double)dwTimeIncrement);*/
+		return 1;
     }
 
     double HiResTimer::Now()

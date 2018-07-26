@@ -9,6 +9,8 @@
 //
 #include "rterrors_limits.h"
 
+#define FACILITY_JSCRIPT 0
+
 enum rtErrors
 {
 #define RT_ERROR_MSG(name, errnum, str1, str2, jst, errorNumSource) name = MAKE_HR(errnum),

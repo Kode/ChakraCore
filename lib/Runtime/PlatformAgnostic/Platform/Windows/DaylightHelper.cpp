@@ -70,7 +70,7 @@ namespace DateTime
             }
             if (sysLocalToUtc == NULL)
             {
-                sysLocalToUtc = (DateConversionFunction)TzSpecificLocalTimeToSystemTime;
+                //**sysLocalToUtc = (DateConversionFunction)TzSpecificLocalTimeToSystemTime;
             }
         }
         return sysLocalToUtc(NULL, local, utc);
@@ -88,7 +88,7 @@ namespace DateTime
             }
             if (sysUtcToLocal == NULL)
             {
-                sysUtcToLocal = (DateConversionFunction)SystemTimeToTzSpecificLocalTime;
+                //**sysUtcToLocal = (DateConversionFunction)SystemTimeToTzSpecificLocalTime;
             }
         }
         return sysUtcToLocal(NULL, utc, local);

@@ -3,6 +3,9 @@
 // Licensed under the MIT license. See LICENSE.txt file in the project root for full license information.
 //-------------------------------------------------------------------------------------------------------
 #pragma once
+
+#include <stdio.h>
+
 class AutoFILE : public BasePtr<FILE>
 {
 public:
