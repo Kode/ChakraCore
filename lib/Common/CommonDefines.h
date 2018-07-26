@@ -301,7 +301,7 @@
 #endif
 
 #if ENABLE_NATIVE_CODEGEN
-#ifdef _WIN32
+#ifdef KORE_WINDOWS
 #define ENABLE_OOP_NATIVE_CODEGEN 1     // Out of process JIT
 #endif
 

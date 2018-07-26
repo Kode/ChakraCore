@@ -64,6 +64,8 @@ project.addIncludeDirs(
 	'../lib/wabt/chakra/windows'
 );
 
+project.addIncludeDir('../asminc');
+
 project.addDefine('_UNICODE');
 project.addDefine('UNICODE');
 project.addDefine('NOMINMAX');

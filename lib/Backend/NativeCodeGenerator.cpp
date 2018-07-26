@@ -3734,7 +3734,7 @@ bool NativeCodeGenerator::TryAggressiveInlining(Js::FunctionBody *const topFunct
     return true;
 }
 
-#if _WIN32
+#if KORE_WINDOWS
 bool
 JITManager::HandleServerCallResult(HRESULT hr, RemoteCallType callType)
 {

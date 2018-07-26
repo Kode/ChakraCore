@@ -17,7 +17,7 @@ enum class RemoteCallType
     MemFree
 };
 
-#if _WIN32 || ENABLE_OOP_NATIVE_CODEGEN
+#if KORE_WINDOWS || ENABLE_OOP_NATIVE_CODEGEN
 class JITManager
 {
 public:
@@ -262,7 +262,7 @@ public:
 
     static JITManager * GetJITManager()
         { return &s_jitManager; }
-    static bool HandleServerCallResult(HRESULT hr, RemoteCallType callType) { Assert(UNREACHED); }
+	static bool HandleServerCallResult(HRESULT hr, RemoteCallType callType) { Assert(UNREACHED); return false; }
 private:
     static JITManager s_jitManager;
 };
