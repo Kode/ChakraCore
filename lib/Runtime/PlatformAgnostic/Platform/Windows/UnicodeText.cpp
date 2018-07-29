@@ -427,3 +427,50 @@ namespace PlatformAgnostic
     };
 };
 #endif
+
+namespace PlatformAgnostic
+{
+	namespace UnicodeText
+	{
+		int32 NormalizeString(NormalizationForm normalizationForm, const char16* sourceString, uint32 sourceLength, char16* destString, int32 destLength, ApiError* pErrorOut) {
+			return 0;
+		}
+
+		bool IsNormalizedString(NormalizationForm normalizatingForm, const char16* testString, int32 testStringLength) {
+			return false;
+		}
+
+		bool IsExternalUnicodeLibraryAvailable() {
+			return false;
+		}
+
+		bool IsWhitespace(codepoint_t ch) {
+			return false;
+		}
+
+		bool IsIdStart(codepoint_t ch) {
+			return false;
+		}
+
+		bool IsIdContinue(codepoint_t ch) {
+			return false;
+		}
+
+		UnicodeGeneralCategoryClass GetGeneralCategoryClass(codepoint_t ch) {
+			return CategoryClassLetter;
+		}
+
+		template<bool toUpper, bool useInvariant>
+		charcount_t ChangeStringLinguisticCase(_In_count_(sourceLength) const char16* sourceString, _In_ charcount_t sourceLength, _Out_writes_(destLength) char16* destString, _In_ charcount_t destLength, _Out_ ApiError* pErrorOut) {
+			return 0;
+		}
+
+		CharacterClassificationType GetLegacyCharacterClassificationType(char16 character) {
+			return CharacterClassificationType::Invalid;
+		}
+
+		int LogicalStringCompare(const char16* string1, const char16* string2) {
+			return 0;
+		}
+	}
+}

@@ -227,7 +227,7 @@ namespace Js {
             }
 
             BOOL dumpGenerated = false;
-            if (needLock)
+            /*if (needLock)
             {
                 // the critical section might have been destructed at process shutdown time. At that time we don't need
                 // to lock.
@@ -250,7 +250,7 @@ namespace Js {
                     &dumpExceptInfo,
                     NULL,
                     NULL);
-            }
+            }*/
             if (!dumpGenerated)
             {
                 Output::Print(_u("Unable to write minidump (0x%08X)\n"), GetLastError());

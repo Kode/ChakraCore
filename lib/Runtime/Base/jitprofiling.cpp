@@ -131,6 +131,7 @@ ITT_EXTERN_C iJIT_IsProfilingActiveFlags JITAPI iJIT_IsProfilingActive()
 static int loadiJIT_Funcs()
 {
     static int bDllWasLoaded = 0;
+#if 0
     char *dllName = (char*)rcsid; /* !! Just to avoid unused code elimination */
 #if ITT_PLATFORM==ITT_PLATFORM_WIN
     DWORD dNameLength = 0;
@@ -256,6 +257,8 @@ static int loadiJIT_Funcs()
     iJIT_DLL_is_missing = 0; /* DLL is ok. */
 
     return 1;
+#endif
+	return 0;
 }
 
 ITT_EXTERN_C unsigned int JITAPI iJIT_GetNewMethodID()

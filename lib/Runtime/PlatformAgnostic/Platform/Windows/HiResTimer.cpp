@@ -70,6 +70,8 @@ namespace DateTime
 
         uint64 JitterManager::QuantizedQPC(uint64 qpc)
         {
+			return qpc;
+#if 0
             // Due to further analysis of some attacks, we're jittering on a more granular
             // frequency of as much as a full millisecond.
 
@@ -146,6 +148,7 @@ namespace DateTime
             }
 
             return quantizedQpc;
+#endif
         }
     };
 

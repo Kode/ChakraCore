@@ -125,7 +125,7 @@ void XDataAllocator::Register(XDataAllocation * xdataInfo, ULONG_PTR functionSta
     xdataInfo->pdata.UnwindInfoAddress = (DWORD)((intptr_t)xdataInfo->address - baseAddress);
 
     BOOLEAN success = FALSE;
-    if (AutoSystemInfo::Data.IsWin8OrLater())
+    //**if (AutoSystemInfo::Data.IsWin8OrLater())
     {
 #if DBG
         // Validate the PDATA was not registered or unregistered
@@ -142,10 +142,10 @@ void XDataAllocator::Register(XDataAllocation * xdataInfo, ULONG_PTR functionSta
             /*RangeEnd*/ functionStart + functionSize);
         success = NT_SUCCESS(status);
     }
-    else
-    {
-        success = RtlAddFunctionTable(&xdataInfo->pdata, 1, functionStart);
-    }
+    //**else
+    //**{
+    //**    success = RtlAddFunctionTable(&xdataInfo->pdata, 1, functionStart);
+    //**}
     Js::Throw::CheckAndThrowOutOfMemory(success);
 
 #if DBG
@@ -165,11 +165,11 @@ void XDataAllocator::Register(XDataAllocation * xdataInfo, ULONG_PTR functionSta
 void XDataAllocator::Unregister(XDataAllocation * xdataInfo)
 {
 #ifdef _WIN32
-    if (!AutoSystemInfo::Data.IsWin8OrLater())
-    {
-        BOOLEAN success = RtlDeleteFunctionTable(&xdataInfo->pdata);
-        Assert(success);
-    }
+    //**if (!AutoSystemInfo::Data.IsWin8OrLater())
+    //**{
+    //**    BOOLEAN success = RtlDeleteFunctionTable(&xdataInfo->pdata);
+    //**    Assert(success);
+    //**}
 
 #else  // !_WIN32
     Assert(ReadHead(xdataInfo->address));  // should be non-empty .eh_frame

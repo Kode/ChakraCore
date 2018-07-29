@@ -2,7 +2,7 @@
 // Copyright (C) Microsoft. All rights reserved.
 // Licensed under the MIT license. See LICENSE.txt file in the project root for full license information.
 //-------------------------------------------------------------------------------------------------------
-#if 0
+
 #include "Runtime.h"
 #include "Core/AtomLockGuids.h"
 #include "Core/ConfigParser.h"
@@ -23,6 +23,7 @@
 extern HANDLE g_hInstance;
 static ATOM  lockedDll = 0;
 
+#if 0
 BOOL AttachProcess(HANDLE hmod)
 {
     if (!ThreadContextTLSEntry::InitializeProcess())
@@ -182,3 +183,76 @@ HRESULT JsInitializeJITServer(
 #endif
 
 #endif
+
+#include <stdlib.h>
+
+extern "C" void* MIDL_user_allocate(size_t cBytes) {
+	return malloc(cBytes);
+}
+
+extern "C" void MIDL_user_free(void* data) {
+	free(data);
+}
+
+#include <Windows.h>
+
+BOOL AttachProcess(HANDLE hmod) {
+	if (!ThreadContextTLSEntry::InitializeProcess())
+	{
+		return FALSE;
+	}
+
+	g_hInstance = hmod;
+	AutoSystemInfo::SaveModuleFileName(hmod);
+
+#if defined(_M_IX86) && !defined(__clang__)
+	// Enable SSE2 math functions in CRT if SSE2 is available
+#pragma prefast(suppress:6031, "We don't require SSE2, but will use it if available")
+	_set_SSE2_enable(TRUE);
+#endif
+
+#if 0
+	if (FAILED(OnChakraCoreLoaded()))
+	{
+		return FALSE;
+	}
+#endif
+
+	{
+		CmdLineArgsParser parser;
+		ConfigParser::ParseOnModuleLoad(parser, hmod);
+	}
+
+#ifdef ENABLE_JS_ETW
+	EtwTrace::Register();
+#endif
+#ifdef VTUNE_PROFILING
+	VTuneChakraProfile::Register();
+#endif
+	ValueType::Initialize();
+	ThreadContext::GlobalInitialize();
+
+	// Needed to make sure that only ChakraCore is loaded into the process
+	// This is unnecessary on Linux since there aren't other flavors of
+	// Chakra binaries that can be loaded into the process
+#if 0
+	const char16 *engine = szChakraCoreLock;
+	if (::FindAtom(szChakraLock) != 0)
+	{
+		AssertMsg(FALSE, "Expecting to load chakracore.dll but process already loaded chakra.dll");
+		Binary_Inconsistency_fatal_error();
+	}
+	lockedDll = ::AddAtom(engine);
+	AssertMsg(lockedDll, "Failed to lock chakracore.dll");
+#endif
+
+#ifdef ENABLE_BASIC_TELEMETRY
+	g_TraceLoggingClient = NoCheckHeapNewStruct(TraceLoggingClient);
+#endif
+
+#ifdef DYNAMIC_PROFILE_STORAGE
+	return DynamicProfileStorage::Initialize();
+#else
+	return TRUE;
+#endif
+}

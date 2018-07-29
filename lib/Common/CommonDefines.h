@@ -154,7 +154,7 @@
 
 
 // xplat-todo: revisit these features
-#ifdef _WIN32
+#ifdef KORE_WINDOWS
 // dep: TIME_ZONE_INFORMATION, DaylightTimeHelper, Windows.Globalization
 //#define ENABLE_GLOBALIZATION
 // #ifndef __clang__
