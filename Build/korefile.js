@@ -12,7 +12,7 @@ await project.addProject('../lib/Common/Core');
 await project.addProject('../lib/Common/DataStructures');
 await project.addProject('../lib/Common/Exceptions');
 await project.addProject('../lib/Common/Memory');
-await project.addProject('../lib/Backend');
+//await project.addProject('../lib/Backend');
 await project.addProject('../lib/Parser');
 await project.addProject('../lib/Jsrt');
 await project.addProject('../lib/Jsrt/Core');
@@ -86,6 +86,8 @@ project.addDefine('BUILD_WITHOUT_SCRIPT_DEBUG');
 project.addDefine('CHAKRACORE_LITE');
 project.addDefine('_M_AMD64');
 project.addDefine('CHAKRA_STATIC_LIBRARY');
+
+project.addDefine('DISABLE_JIT');
 
 project.addLib('Rpcrt4');
 project.addLib('Mincore');

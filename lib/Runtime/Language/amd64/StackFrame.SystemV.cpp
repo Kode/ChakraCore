@@ -38,11 +38,11 @@ Amd64StackFrame::InitializeByFrameId(void * frame, ScriptContext* scriptContext)
 bool
 Amd64StackFrame::InitializeByReturnAddress(void * returnAddress, ScriptContext* scriptContext)
 {
-    void ** framePtr;
-    __asm
-    {
-        mov framePtr, rbp;
-    }
+    void ** framePtr = nullptr;
+    //__asm
+    //{
+    //    mov framePtr, rbp;
+    //}
     this->frame = framePtr;
 
     this->stackCheckCodeHeight =

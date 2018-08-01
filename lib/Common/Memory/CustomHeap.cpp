@@ -263,7 +263,7 @@ Allocation* Heap<TAlloc, TPreReservedAlloc>::Alloc(size_t bytes, ushort pdataCou
         }
 
 #if defined(DBG)
-        MEMORY_BASIC_INFORMATION memBasicInfo;
+        /*MEMORY_BASIC_INFORMATION memBasicInfo;
         size_t resultBytes = VirtualQueryEx(this->processHandle, page->address, &memBasicInfo, sizeof(memBasicInfo));
         if (resultBytes == 0)
         {
@@ -272,7 +272,7 @@ Allocation* Heap<TAlloc, TPreReservedAlloc>::Alloc(size_t bytes, ushort pdataCou
         else
         {
             Assert(memBasicInfo.Protect == PAGE_EXECUTE_READ);
-        }
+        }*/
 #endif
 
         Allocation* allocation = nullptr;

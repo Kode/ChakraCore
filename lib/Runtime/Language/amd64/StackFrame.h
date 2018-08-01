@@ -79,7 +79,7 @@
 namespace Js {
     class ScriptContext;
 
-#ifdef _WIN32
+#ifdef KORE_WINDOWS
     class Amd64StackFrame {
     public:
         Amd64StackFrame();

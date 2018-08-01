@@ -2595,7 +2595,7 @@ HeapPageAllocator<T>::ProtectPages(__in char* address, size_t pageCount, __in vo
     MEMORY_BASIC_INFORMATION memBasicInfo;
 
     // check old protection on all pages about to change, ensure the fidelity
-    size_t bytes = VirtualQuery(address, &memBasicInfo, sizeof(memBasicInfo));
+    /*size_t bytes = VirtualQuery(address, &memBasicInfo, sizeof(memBasicInfo));
     if (bytes == 0)
     {
         MemoryOperationLastError::RecordLastError();
@@ -2606,7 +2606,7 @@ HeapPageAllocator<T>::ProtectPages(__in char* address, size_t pageCount, __in vo
     {
         CustomHeap_BadPageState_fatal_error((ULONG_PTR)this);
         return FALSE;
-    }
+    }*/
 
     /*Verify if we always pass the PAGE_TARGETS_NO_UPDATE flag, if the protect flag is EXECUTE*/
 #if defined(_CONTROL_FLOW_GUARD)
@@ -2632,7 +2632,7 @@ HeapPageAllocator<T>::ProtectPages(__in char* address, size_t pageCount, __in vo
     }
 #endif
 
-    DWORD oldProtect; // this is only for first page
+   /*DWORD oldProtect; // this is only for first page
     BOOL retVal = VirtualProtect(address, pageCount * AutoSystemInfo::PageSize, dwVirtualProtectFlags, &oldProtect);
     if (retVal == FALSE)
     {
@@ -2643,7 +2643,8 @@ HeapPageAllocator<T>::ProtectPages(__in char* address, size_t pageCount, __in vo
         Assert(oldProtect == desiredOldProtectFlag);
     }
 
-    return retVal;
+    return retVal;*/
+	return TRUE;
 }
 
 template<typename T>
