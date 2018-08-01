@@ -52,6 +52,7 @@ ArenaAllocator* GetOutputAllocator2()
 
 void ConfigParser::ParseOnModuleLoad(CmdLineArgsParser& parser, HANDLE hmod)
 {
+	return;
     Assert(!s_moduleConfigParser.HasReadConfig());
 
     s_moduleConfigParser.ParseRegistry(parser);

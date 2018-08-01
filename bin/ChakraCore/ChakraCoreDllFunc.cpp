@@ -250,9 +250,9 @@ BOOL AttachProcess(HANDLE hmod) {
 	g_TraceLoggingClient = NoCheckHeapNewStruct(TraceLoggingClient);
 #endif
 
-#ifdef DYNAMIC_PROFILE_STORAGE
-	return DynamicProfileStorage::Initialize();
-#else
+//#ifdef DYNAMIC_PROFILE_STORAGE
+//	return DynamicProfileStorage::Initialize();
+//#else
 	return TRUE;
-#endif
+//#endif
 }

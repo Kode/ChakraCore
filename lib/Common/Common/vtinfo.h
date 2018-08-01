@@ -115,11 +115,11 @@ public:
     }
 };
 
-//**#if !defined(USED_IN_STATIC_LIB)
+#if !defined(USED_IN_STATIC_LIB)
 #pragma warning(disable:4238) // class rvalue used as lvalue
 template <typename T>
-INT_PTR const VirtualTableInfo<T>::Address = 0;//** VirtualTableInfo<T>::RegisterVirtualTable();
-//**#endif
+INT_PTR const VirtualTableInfo<T>::Address = VirtualTableInfo<T>::RegisterVirtualTable();
+#endif
 
 #define DEFINE_VTABLE_CTOR_NOBASE_ABSTRACT(T) \
     T(VirtualTableInfoCtorEnum v) {} \

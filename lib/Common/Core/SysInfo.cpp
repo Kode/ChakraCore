@@ -63,7 +63,6 @@ AutoSystemInfo::IsLowMemoryDevice()
 void
 AutoSystemInfo::Initialize()
 {
-#ifndef KORE_CONSOLE
     Assert(!initialized);
 #ifndef _WIN32
     PAL_InitializeChakraCore();
@@ -85,7 +84,7 @@ AutoSystemInfo::Initialize()
 #endif
     allocationGranularityPageCount = dwAllocationGranularity / dwPageSize;
 
-    isWindows8OrGreater = IsWindows8OrGreater();
+	isWindows8OrGreater = true; //** IsWindows8OrGreater();
 
     binaryName[0] = _u('\0');
 
@@ -123,7 +122,6 @@ AutoSystemInfo::Initialize()
     this->availableCommit = 0;
 
     ChakraBinaryAutoSystemInfoInit(this);
-#endif
 }
 
 

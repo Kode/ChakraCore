@@ -81,10 +81,11 @@ project.addDefine('WIN32_LEAN_AND_MEAN=1');
 project.addDefine('_WIN32_WINNT=0x0A00');
 project.addDefine('WINVER=0x0A00');
 
-project.addDefine('USED_IN_STATIC_LIB');
+//project.addDefine('USED_IN_STATIC_LIB');
 project.addDefine('BUILD_WITHOUT_SCRIPT_DEBUG');
 project.addDefine('CHAKRACORE_LITE');
 project.addDefine('_M_AMD64');
+project.addDefine('CHAKRA_STATIC_LIBRARY');
 
 project.addLib('Rpcrt4');
 project.addLib('Mincore');

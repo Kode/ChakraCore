@@ -511,7 +511,7 @@
 
 // xplat-todo: revive FaultInjection on non-Win32 platforms
 // currently depends on io.h
-#ifdef _WIN32
+#ifdef KORE_WINDOWS
 #define FAULT_INJECTION
 #endif
 #define RECYCLER_NO_PAGE_REUSE
