@@ -462,7 +462,10 @@ namespace PlatformAgnostic
 
 		template<bool toUpper, bool useInvariant>
 		charcount_t ChangeStringLinguisticCase(_In_count_(sourceLength) const char16* sourceString, _In_ charcount_t sourceLength, _Out_writes_(destLength) char16* destString, _In_ charcount_t destLength, _Out_ ApiError* pErrorOut) {
-			return 0;
+			if (destLength > 0) {
+				memcpy(destString, sourceString, sourceLength * 2 + 2);
+			}
+			return sourceLength;
 		}
 
 		CharacterClassificationType GetLegacyCharacterClassificationType(char16 character) {
