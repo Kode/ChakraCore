@@ -37,7 +37,8 @@ BOOL
 BinaryFeatureControl::GetMitigationPolicyForProcess(__in HANDLE hProcess, __in PROCESS_MITIGATION_POLICY MitigationPolicy, __out_bcount(nLength) PVOID lpBuffer, __in SIZE_T nLength)
 {
 #if !defined(DELAYLOAD_SET_CFG_TARGET)
-    return GetProcessMitigationPolicy(hProcess, MitigationPolicy, lpBuffer, nLength);
+    //return GetProcessMitigationPolicy(hProcess, MitigationPolicy, lpBuffer, nLength);
+	return FALSE;
 #else
     return FALSE;
 #endif
