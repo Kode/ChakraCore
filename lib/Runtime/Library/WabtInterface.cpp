@@ -151,7 +151,11 @@ Js::Var WabtInterface::EntryConvertWast2Wasm(RecyclableObject* function, CallInf
         ChakraWabt::ChakraContext wabtCtx;
         wabtCtx.user_data = &context;
         wabtCtx.createBuffer = CreateBuffer;
+#ifdef NDEBUG
+		wabtCtx.features.sign_extends = true;
+#else
         wabtCtx.features.sign_extends = CONFIG_FLAG(WasmSignExtends);
+#endif
         wabtCtx.features.threads = Wasm::Threads::IsEnabled();
         wabtCtx.features.simd = Wasm::Simd::IsEnabled();
         if (isSpecText)

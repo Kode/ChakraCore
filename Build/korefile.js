@@ -1,5 +1,7 @@
 let project = new Project('Chakra');
 
+const release = true;
+
 await project.addProject('../bin/ChakraCore');
 await project.addProject('../lib/Common/Codex');
 await project.addProject('../lib/Runtime/ByteCode');
@@ -33,10 +35,15 @@ await project.addProject('../pal');
 await project.addProject('../lib/wabt');
 //await project.addProject('../deps/Chakra.ICU');
 
+let buildDir = 'VcBuild/obj/x64_debug/';
+if (release) {
+	buildDir = 'VcBuild/obj/x64_release/'
+}
+
 project.addIncludeDirs(
-	'VcBuild/obj/x64_debug/CoreManifests',
-	'VcBuild/obj/x64_debug/ch',
-	'VcBuild/obj/x64_debug/Chakra.JITIDL'
+	buildDir + 'CoreManifests',
+	buildDir + 'ch',
+	buildDir + 'Chakra.JITIDL'
 );
 project.addIncludeDirs(
 	'../lib/Common',
@@ -71,9 +78,11 @@ project.addDefine('USE_EDGEMODE_JSRT');
 project.addDefine('COM_STDMETHOD_CAN_THROW');
 project.addDefine('USE_STATIC_RUNTIMELIB');
 project.addDefine('CAN_BUILD_WABT=1');
-project.addDefine('_DEBUG');
-project.addDefine('DBG');
-project.addDefine('DBG_DUMP');
+if (!release) {
+	project.addDefine('_DEBUG');
+	project.addDefine('DBG');
+	project.addDefine('DBG_DUMP');
+}
 project.addDefine('_CHAKRACOREBUILD');
 project.addDefine('WIN32_LEAN_AND_MEAN=1');
 project.addDefine('_WIN32_WINNT=0x0A00');
