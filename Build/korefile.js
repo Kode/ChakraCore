@@ -1,8 +1,10 @@
 let project = new Project('Chakra');
 
-const release = true;
+const release = false;
 
-await project.addProject('../bin/ChakraCore');
+if (platform === 'win32') {
+	await project.addProject('../bin/ChakraCore');
+}
 await project.addProject('../lib/Common/Codex');
 await project.addProject('../lib/Runtime/ByteCode');
 await project.addProject('../lib/Runtime/Debug');
@@ -26,13 +28,15 @@ await project.addProject('../lib/Runtime/Base');
 await project.addProject('../lib/WasmReader');
 //await project.addProject('../bin/GCStress');
 await project.addProject('../lib/Runtime/PlatformAgnostic');
-await project.addProject('../lib/JITClient');
+if (platform === 'win32') {
+	await project.addProject('../lib/JITClient');
+	await project.addProject('../lib/JITServer');
+	await project.addProject('../lib/wabt');
+}
 await project.addProject('../lib/JITIDL');
-await project.addProject('../lib/JITServer');
 //await project.addProject('../bin/NativeTests');
 //await project.addProject('../Manifests');
 await project.addProject('../pal');
-await project.addProject('../lib/wabt');
 //await project.addProject('../deps/Chakra.ICU');
 
 let buildDir = 'VcBuild/obj/x64_debug/';
@@ -71,6 +75,10 @@ project.addIncludeDirs(
 	'../lib/wabt/chakra/windows'
 );
 
+if (platform !== 'win32') {
+	project.addIncludeDirs('../pal', '../pal/inc', '../pal/inc/rt');
+}
+
 project.addDefine('_UNICODE');
 project.addDefine('UNICODE');
 project.addDefine('NOMINMAX');
@@ -84,13 +92,53 @@ if (!release) {
 	project.addDefine('DBG_DUMP');
 }
 project.addDefine('_CHAKRACOREBUILD');
-project.addDefine('WIN32_LEAN_AND_MEAN=1');
-project.addDefine('_WIN32_WINNT=0x0A00');
-project.addDefine('WINVER=0x0A00');
 
-project.addLib('Rpcrt4');
-project.addLib('Mincore');
-project.addLib('XmlLite');
-project.addLib('Dbghelp');
+if (platform === 'win32') {
+	project.addDefine('WIN32_LEAN_AND_MEAN=1');
+	project.addDefine('_WIN32_WINNT=0x0A00');
+	project.addDefine('WINVER=0x0A00');
+
+	project.addLib('Rpcrt4');
+	project.addLib('Mincore');
+	project.addLib('XmlLite');
+	project.addLib('Dbghelp');
+}
+else {
+	//project.addDefine('PAL_STDCPP_COMPAT');
+}
+
+if (platform !== 'win32') {
+	project.addDefine('TARGET_64');
+	project.addDefine('PLATFORM_UNIX');
+	project.addDefine('_CHAKRACOREBUILD');
+	project.addDefine('FEATURE_PAL');
+	project.addDefine('PLATFORM_UNIX=1');
+	project.addDefine('_M_X64');
+	project.addDefine('_M_AMD64');
+	project.addDefine('_AMD64_');
+	project.addDefine('UNICODE');
+	project.addDefine('_SAFECRT_USE_CPP_OVERLOADS=1');
+	project.addDefine('__STDC_WANT_LIB_EXT1__=1');
+	project.addDefine('CLANG_HAS_DISABLE_TAIL_CALLS=1');
+	project.addDefine('BIT64=1');
+	project.addDefine('STACK_ALIGN=16');
+	project.addDefine('NO_PAL_MINMAX');
+	project.addDefine('PAL_STDCPP_COMPAT');
+
+	project.addCppFlags(
+		'-fno-omit-frame-pointer',
+		'-fdelayed-template-parsing',
+		'-msse4.2',
+		'-fasm-blocks',
+		'-fms-extensions',
+		'-fwrapv',
+		'-fPIC',
+		'-std=gnu++11',
+		'-fdiagnostics-color=always',
+		'-Wno-invalid-token-paste',
+		'-Wno-return-type',
+		'-Wno-address-of-temporary'
+	);
+}
 
 resolve(project);
