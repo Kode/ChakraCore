@@ -4,6 +4,8 @@
 //-------------------------------------------------------------------------------------------------------
 #pragma once
 
+#define PAL_STDCPP_COMPAT
+
 #include "CommonMinMemory.h"
 
 typedef _Return_type_success_(return >= 0) LONG NTSTATUS;

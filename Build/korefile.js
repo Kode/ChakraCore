@@ -44,6 +44,10 @@ if (release) {
 	buildDir = 'VcBuild/obj/x64_release/'
 }
 
+if (platform !== 'win32') {
+	project.addIncludeDir('../out/Release/pal/src')
+}
+
 project.addIncludeDirs(
 	buildDir + 'CoreManifests',
 	buildDir + 'ch',
@@ -76,10 +80,10 @@ project.addIncludeDirs(
 );
 
 if (platform !== 'win32') {
-	project.addIncludeDirs('../pal', '../pal/inc', '../pal/inc/rt');
+	project.addIncludeDirs('../pal', '../pal/inc', '../pal/inc/rt', '../pal/src/include');
 }
 
-project.addDefine('_UNICODE');
+//project.addDefine('_UNICODE');
 project.addDefine('UNICODE');
 project.addDefine('NOMINMAX');
 project.addDefine('USE_EDGEMODE_JSRT');
@@ -104,26 +108,24 @@ if (platform === 'win32') {
 	project.addLib('Dbghelp');
 }
 else {
-	//project.addDefine('PAL_STDCPP_COMPAT');
-}
-
-if (platform !== 'win32') {
 	project.addDefine('TARGET_64');
 	project.addDefine('PLATFORM_UNIX');
-	project.addDefine('_CHAKRACOREBUILD');
 	project.addDefine('FEATURE_PAL');
 	project.addDefine('PLATFORM_UNIX=1');
 	project.addDefine('_M_X64');
 	project.addDefine('_M_AMD64');
 	project.addDefine('_AMD64_');
-	project.addDefine('UNICODE');
 	project.addDefine('_SAFECRT_USE_CPP_OVERLOADS=1');
 	project.addDefine('__STDC_WANT_LIB_EXT1__=1');
 	project.addDefine('CLANG_HAS_DISABLE_TAIL_CALLS=1');
 	project.addDefine('BIT64=1');
 	project.addDefine('STACK_ALIGN=16');
+	project.addDefine('LP64COMPATIBLE=1');
+	project.addDefine('FEATURE_PAL=1');
+	project.addDefine('PIC=1');
+	project.addDefine('_FILE_OFFSET_BITS=64');
+	project.addDefine('_WIN64=1');
 	project.addDefine('NO_PAL_MINMAX');
-	project.addDefine('PAL_STDCPP_COMPAT');
 
 	project.addCppFlags(
 		'-fno-omit-frame-pointer',
@@ -137,7 +139,20 @@ if (platform !== 'win32') {
 		'-fdiagnostics-color=always',
 		'-Wno-invalid-token-paste',
 		'-Wno-return-type',
-		'-Wno-address-of-temporary'
+		'-Wno-address-of-temporary',
+		'-fno-builtin',
+		'-fstack-protector'
+	);
+
+	project.addCFlags(
+		'-msse4.2',
+		'-fasm-blocks',
+		'-fwrapv',
+		'-fms-extensions',
+		'-fdiagnostics-color=always',
+		'-fPIC',
+		'-fno-builtin',
+		'-fstack-protector'
 	);
 }
 

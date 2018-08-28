@@ -116,7 +116,7 @@ static int __cdecl vwscan_fn (
         miniFILE str;
         miniFILE *infile = &str;
         int retval;
-        size_t count = wcsnlen(string, INT_MAX);
+        size_t count = wcsnlen2(string, INT_MAX);
 
         _VALIDATE_RETURN( (string != NULL), EINVAL, EOF);
         _VALIDATE_RETURN( (format != NULL), EINVAL, EOF);
@@ -150,7 +150,7 @@ static int __cdecl vnwscan_fn (
         miniFILE str;
         miniFILE *infile = &str;
         int retval;
-        size_t length = wcsnlen(string, INT_MAX);
+        size_t length = wcsnlen2(string, INT_MAX);
 
         _VALIDATE_RETURN( (string != NULL), EINVAL, EOF);
         _VALIDATE_RETURN( (format != NULL), EINVAL, EOF);

@@ -4,6 +4,8 @@
 //-------------------------------------------------------------------------------------------------------
 #pragma once
 
+#define PAL_STDCPP_COMPAT
+
 #ifdef _WIN32
 #include "CommonMin.h"
 #else

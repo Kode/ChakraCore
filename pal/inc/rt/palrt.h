@@ -96,6 +96,8 @@ typedef enum tagEFaultRepRetVal
 
 #include <pal_assert.h>
 
+#include <stdarg.h>
+
 #if defined(_DEBUG)
 #define ROTOR_PAL_CTOR_TEST_BODY(TESTNAME)                              \
     class TESTNAME ## _CTOR_TEST {                                      \

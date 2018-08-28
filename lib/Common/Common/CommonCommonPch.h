@@ -4,6 +4,8 @@
 //-------------------------------------------------------------------------------------------------------
 #pragma once
 
+#define PAL_STDCPP_COMPAT
+
 #include "CommonMin.h"
 
 // === C Runtime Header Files ===

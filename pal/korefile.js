@@ -1,3 +1,6 @@
 let project = new Project('pal');
-project.addFiles('*');
+if (platform !== 'win32') {
+	project.addFiles('**');
+	project.addExcludes('src/arch/**');
+}
 resolve(project);

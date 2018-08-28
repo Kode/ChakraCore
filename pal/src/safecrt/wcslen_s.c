@@ -43,7 +43,7 @@
 *
 *******************************************************************************/
 
-size_t __cdecl wcsnlen(const char16_t *wcs, size_t maxsize)
+size_t __cdecl wcsnlen2(const char16_t *wcs, size_t maxsize)
 {
     size_t n;
 
