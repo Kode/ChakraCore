@@ -169,11 +169,13 @@ EXTERN_C BOOL WINAPI DllMain(HINSTANCE hmod, DWORD dwReason, PVOID pvReserved)
     }
 }
 
+#ifdef KORE_WINDOWS
 void ChakraBinaryAutoSystemInfoInit(AutoSystemInfo * autoSystemInfo)
 {
     autoSystemInfo->buildDateHash = JsUtil::CharacterBuffer<char>::StaticGetHashCode(__DATE__, _countof(__DATE__));
     autoSystemInfo->buildTimeHash = JsUtil::CharacterBuffer<char>::StaticGetHashCode(__TIME__, _countof(__TIME__));
 }
+#endif
 
 #if !ENABLE_NATIVE_CODEGEN
 HRESULT JsInitializeJITServer(
