@@ -47,10 +47,12 @@ BOOL AttachProcess(HANDLE hmod)
     }
 #endif
 
+#ifdef KORE_WINDOWS
     {
         CmdLineArgsParser parser;
         ConfigParser::ParseOnModuleLoad(parser, hmod);
     }
+#endif
 
 #ifdef ENABLE_JS_ETW
     EtwTrace::Register();
@@ -79,7 +81,7 @@ BOOL AttachProcess(HANDLE hmod)
     g_TraceLoggingClient = NoCheckHeapNewStruct(TraceLoggingClient);
 #endif
 
-#ifdef DYNAMIC_PROFILE_STORAGE
+#if defined(DYNAMIC_PROFILE_STORAGE) && defined(KORE_WINDOWS)
     return DynamicProfileStorage::Initialize();
 #else
     return TRUE;

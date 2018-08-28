@@ -2,6 +2,10 @@ let project = new Project('Chakra');
 
 const release = false;
 
+// hopefully this initializes globals in pal first
+// because that's important
+await project.addProject('../pal');
+
 await project.addProject('../bin/ChakraCore');
 await project.addProject('../lib/Common/Codex');
 await project.addProject('../lib/Runtime/ByteCode');
@@ -34,7 +38,6 @@ if (platform === 'win32') {
 await project.addProject('../lib/JITIDL');
 //await project.addProject('../bin/NativeTests');
 //await project.addProject('../Manifests');
-await project.addProject('../pal');
 //await project.addProject('../deps/Chakra.ICU');
 
 let buildDir = 'VcBuild/obj/x64_debug/';
