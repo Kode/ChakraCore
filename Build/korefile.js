@@ -2,9 +2,7 @@ let project = new Project('Chakra');
 
 const release = false;
 
-if (platform === 'win32') {
-	await project.addProject('../bin/ChakraCore');
-}
+await project.addProject('../bin/ChakraCore');
 await project.addProject('../lib/Common/Codex');
 await project.addProject('../lib/Runtime/ByteCode');
 await project.addProject('../lib/Runtime/Debug');
@@ -89,7 +87,6 @@ project.addDefine('NOMINMAX');
 project.addDefine('USE_EDGEMODE_JSRT');
 project.addDefine('COM_STDMETHOD_CAN_THROW');
 project.addDefine('USE_STATIC_RUNTIMELIB');
-project.addDefine('CAN_BUILD_WABT=1');
 if (!release) {
 	project.addDefine('_DEBUG');
 	project.addDefine('DBG');
@@ -101,6 +98,7 @@ if (platform === 'win32') {
 	project.addDefine('WIN32_LEAN_AND_MEAN=1');
 	project.addDefine('_WIN32_WINNT=0x0A00');
 	project.addDefine('WINVER=0x0A00');
+	project.addDefine('CAN_BUILD_WABT=1');
 
 	project.addLib('Rpcrt4');
 	project.addLib('Mincore');
@@ -126,6 +124,7 @@ else {
 	project.addDefine('_FILE_OFFSET_BITS=64');
 	project.addDefine('_WIN64=1');
 	project.addDefine('NO_PAL_MINMAX');
+	project.addDefine('_ENABLE_DYNAMIC_THUNKS=1');
 
 	project.addCppFlags(
 		'-fno-omit-frame-pointer',
