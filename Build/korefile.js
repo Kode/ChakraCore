@@ -49,6 +49,10 @@ if (platform === Platform.OSX) {
 	project.addIncludeDir('prebuilt/macOS')
 }
 
+if (platform === Platform.Linux) {
+	project.addIncludeDir('prebuilt/Linux');
+}
+
 project.addIncludeDirs(
 	buildDir + 'CoreManifests',
 	buildDir + 'ch',

@@ -1,5 +1,5 @@
 let project = new Project('pal');
-if (platform !== 'win32') {
+if (platform !== Platform.Windows) {
 	project.addFiles('**');
 	project.addExcludes('src/arch/arm/**');
 }
