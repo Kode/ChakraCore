@@ -1,6 +1,6 @@
 let project = new Project('Chakra');
 
-const release = false;
+const release = true;
 
 // hopefully this initializes globals in pal first
 // because that's important
