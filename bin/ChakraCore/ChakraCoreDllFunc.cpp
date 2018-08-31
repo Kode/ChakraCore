@@ -24,11 +24,11 @@ extern HANDLE g_hInstance;
 static ATOM  lockedDll = 0;
 #endif
 
-BOOL AttachProcess(HANDLE hmod)
+bool AttachProcess(HANDLE hmod)
 {
     if (!ThreadContextTLSEntry::InitializeProcess())
     {
-         return FALSE;
+         return false;
     }
 
     g_hInstance = hmod;
@@ -43,7 +43,7 @@ BOOL AttachProcess(HANDLE hmod)
 #ifdef ENABLE_TEST_HOOKS
     if (FAILED(OnChakraCoreLoaded()))
     {
-        return FALSE;
+        return false;
     }
 #endif
 
@@ -84,7 +84,7 @@ BOOL AttachProcess(HANDLE hmod)
 #if defined(DYNAMIC_PROFILE_STORAGE) && defined(KORE_WINDOWS)
     return DynamicProfileStorage::Initialize();
 #else
-    return TRUE;
+    return true;
 #endif
 }
 

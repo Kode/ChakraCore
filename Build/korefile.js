@@ -132,6 +132,9 @@ else {
 	project.addDefine('_WIN64=1');
 	project.addDefine('NO_PAL_MINMAX');
 	project.addDefine('_ENABLE_DYNAMIC_THUNKS=1');
+	if (platform === Platform.Linux) {
+		project.addDefine('__LINUX__=1');
+	}
 
 	project.addCppFlags(
 		'-fno-omit-frame-pointer',
