@@ -30,7 +30,7 @@ await project.addProject('../lib/Runtime/Base');
 await project.addProject('../lib/WasmReader');
 //await project.addProject('../bin/GCStress');
 await project.addProject('../lib/Runtime/PlatformAgnostic');
-if (platform === 'win32') {
+if (platform === Platform.Windows) {
 	await project.addProject('../lib/JITClient');
 	await project.addProject('../lib/JITServer');
 	await project.addProject('../lib/wabt');
@@ -45,8 +45,8 @@ if (release) {
 	buildDir = 'VcBuild/obj/x64_release/'
 }
 
-if (platform !== 'win32') {
-	project.addIncludeDir('../out/Release/pal/src')
+if (platform === Platform.OSX) {
+	project.addIncludeDir('prebuilt/macOS')
 }
 
 project.addIncludeDirs(
@@ -80,7 +80,7 @@ project.addIncludeDirs(
 	'../lib/wabt/chakra/windows'
 );
 
-if (platform !== 'win32') {
+if (platform !== Platform.Windows) {
 	project.addIncludeDirs('../pal', '../pal/inc', '../pal/inc/rt', '../pal/src/include');
 }
 
@@ -97,7 +97,7 @@ if (!release) {
 }
 project.addDefine('_CHAKRACOREBUILD');
 
-if (platform === 'win32') {
+if (platform === Platform.Windows) {
 	project.addDefine('WIN32_LEAN_AND_MEAN=1');
 	project.addDefine('_WIN32_WINNT=0x0A00');
 	project.addDefine('WINVER=0x0A00');
