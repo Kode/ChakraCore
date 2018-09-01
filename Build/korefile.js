@@ -152,7 +152,12 @@ else {
 		'-Wno-return-type',
 		'-Wno-address-of-temporary',
 		'-fno-builtin',
-		'-fstack-protector'
+		'-fstack-protector',
+		'-Wno-unused-value',
+		'-Wno-microsoft-template',
+		'-Wno-invalid-offsetof',
+		'-Wno-microsoft-sealed',
+		'-Wno-inconsistent-missing-override'
 	);
 
 	project.addCFlags(
