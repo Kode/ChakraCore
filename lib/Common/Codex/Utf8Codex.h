@@ -11,7 +11,9 @@
 // TODO: Abstract out into it's own file
 #include "pal.h"
 #include "inc/rt/palrt.h"
-//#include <stdint.h>
+#ifndef KORE_LINUX
+#include <stdint.h>
+#endif
 #endif
 
 // Utf8Codex.h needs to be self contained, so these type defs are duplicated from CommonTypeDefs.h
