@@ -1,6 +1,6 @@
 let project = new Project('Chakra');
 
-const release = true;
+const release = false;
 
 // hopefully this initializes globals in pal first
 // because that's important
@@ -95,6 +95,7 @@ project.addDefine('USE_EDGEMODE_JSRT');
 project.addDefine('COM_STDMETHOD_CAN_THROW');
 project.addDefine('USE_STATIC_RUNTIMELIB');
 if (!release) {
+	project.addDefine('DEBUG');
 	project.addDefine('_DEBUG');
 	project.addDefine('DBG');
 	project.addDefine('DBG_DUMP');
@@ -134,6 +135,7 @@ else {
 	project.addDefine('_ENABLE_DYNAMIC_THUNKS=1');
 	if (platform === Platform.Linux) {
 		project.addDefine('__LINUX__=1');
+		project.addDefine('LINUX64');
 	}
 
 	project.addCppFlags(
