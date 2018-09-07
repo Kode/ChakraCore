@@ -109,7 +109,8 @@ if (platform === Platform.Windows) {
 	project.addDefine('CAN_BUILD_WABT=1');
 
 	project.addLib('Rpcrt4');
-	project.addLib('Mincore');
+	project.addLib('Version');
+	project.addLib('Bcrypt');
 	project.addLib('XmlLite');
 	project.addLib('Dbghelp');
 }
