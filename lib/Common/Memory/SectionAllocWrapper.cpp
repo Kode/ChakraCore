@@ -10,8 +10,8 @@
 
 #ifdef NTDDI_WIN10_RS2
 #if (NTDDI_VERSION >= NTDDI_WIN10_RS2)
-#define USEFILEMAP2 1
-#define USEVIRTUALUNLOCKEX 0
+// #define USEFILEMAP2 1
+// #define USEVIRTUALUNLOCKEX 0
 #endif
 #endif
 
