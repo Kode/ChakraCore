@@ -37,7 +37,9 @@ using namespace ABI::Windows::Foundation::Collections;
 #define IfFailedGoLabel(expr, label) if (FAILED(expr)) { goto label; }
 #define IfFailedGo(expr) IfFailedGoLabel(expr, LReturn)
 
+#ifdef _WIN32
 BOOL RoOriginateError(HRESULT error, HSTRING message) { return TRUE; }
+#endif
 
 namespace Js
 {
