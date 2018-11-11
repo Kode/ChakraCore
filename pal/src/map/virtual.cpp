@@ -27,7 +27,7 @@ Abstract:
 #include "pal/virtual.h"
 #include "pal/map.h"
 #include "pal/init.h"
-#include "common.h"
+#include "mapcommon.h"
 
 #include <sys/types.h>
 #include <sys/mman.h>

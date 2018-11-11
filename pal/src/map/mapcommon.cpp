@@ -22,7 +22,7 @@ Abstract:
 #include "pal/palinternal.h"
 #include "pal/dbgmsg.h"
 
-#include "common.h"
+#include "mapcommon.h"
 
 #include <sys/mman.h>
 

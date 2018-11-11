@@ -25,7 +25,7 @@ Abstract:
 #include "pal/init.h"
 #include "pal/critsect.h"
 #include "pal/virtual.h"
-#include "common.h"
+#include "mapcommon.h"
 #include "pal/map.hpp"
 #include "pal/thread.hpp"
 #include "pal/file.hpp"
