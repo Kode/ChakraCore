@@ -1,10 +1,12 @@
 let project = new Project('Chakra');
 
-const release = false;
-
 // hopefully this initializes globals in pal first
 // because that's important
 await project.addProject('../pal');
+
+// these generate files on Windows
+await project.addProject('../lib/JITIDL');
+await project.addProject('../manifests');
 
 await project.addProject('../bin/ChakraCore');
 await project.addProject('../lib/Common/Codex');
@@ -35,15 +37,9 @@ if (platform === Platform.Windows) {
 	await project.addProject('../lib/JITServer');
 	await project.addProject('../lib/wabt');
 }
-await project.addProject('../lib/JITIDL');
 //await project.addProject('../bin/NativeTests');
 //await project.addProject('../Manifests');
 //await project.addProject('../deps/Chakra.ICU');
-
-let buildDir = 'VcBuild/obj/x64_debug/';
-if (release) {
-	buildDir = 'VcBuild/obj/x64_release/'
-}
 
 if (platform === Platform.OSX) {
 	project.addIncludeDir('prebuilt/macOS')
@@ -53,11 +49,6 @@ if (platform === Platform.Linux) {
 	project.addIncludeDir('prebuilt/Linux');
 }
 
-project.addIncludeDirs(
-	buildDir + 'CoreManifests',
-	buildDir + 'ch',
-	buildDir + 'Chakra.JITIDL'
-);
 project.addIncludeDirs(
 	'../lib/Common',
 	'../lib/Common/PlaceHolder',
@@ -94,12 +85,12 @@ project.addDefine('NOMINMAX');
 project.addDefine('USE_EDGEMODE_JSRT');
 project.addDefine('COM_STDMETHOD_CAN_THROW');
 project.addDefine('USE_STATIC_RUNTIMELIB');
-if (!release) {
-	project.addDefine('DEBUG');
-	project.addDefine('_DEBUG');
-	project.addDefine('DBG');
-	project.addDefine('DBG_DUMP');
-}
+
+project.addDefine('DEBUG', 'debug');
+project.addDefine('_DEBUG', 'debug');
+project.addDefine('DBG', 'debug');
+project.addDefine('DBG_DUMP', 'debug');
+
 project.addDefine('_CHAKRACOREBUILD');
 
 if (platform === Platform.Windows) {

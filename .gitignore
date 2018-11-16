@@ -110,3 +110,5 @@ cc-toolchain/
 Build/VcBuild
 Build/VcBuild.NoJIT
 Build/VcBuild.SWB
+/lib/JITIDL/generated/*.h
+/lib/JITIDL/generated/*.c
