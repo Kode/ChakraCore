@@ -6,6 +6,10 @@
 #pragma once
 
 #include "../JITIDL/JITTypes.h"
-#include "ChakraJIT.h"
+#ifdef NDEBUG
+#include "Release/ChakraJIT.h"
+#else
+#include "Debug/ChakraJIT.h"
+#endif
 
 #include "JITManager.h"

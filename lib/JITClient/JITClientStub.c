@@ -8,6 +8,10 @@
 #pragma warning(disable: 28252)
 #pragma warning(disable: 28253)
 
-#include "ChakraJIT_c.c"
+#ifdef NDEBUG
+#include "Release/ChakraJIT_c.c"
+#else
+#include "Debug/ChakraJIT_c.c"
+#endif
 
 #pragma warning(pop)

@@ -8,7 +8,11 @@
 #include "Common.h"
 
 #include "../JITIDL/JITTypes.h"
-#include "ChakraJIT.h"
+#ifdef NDEBUG
+#include "Release/ChakraJIT.h"
+#else
+#include "Debug/ChakraJIT.h"
+#endif
 
 #include "Runtime.h"
 #include "Backend.h"
