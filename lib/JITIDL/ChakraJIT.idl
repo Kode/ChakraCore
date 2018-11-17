@@ -116,7 +116,7 @@ interface IChakraJIT
         [in] CodeGenWorkItemIDL * workItemData,
         [out] JITOutputIDL * jitData);
 
-#if DBG
+#if Debug
     HRESULT IsInterpreterThunkAddr(
         [in] handle_t binding,
         [in] PSCRIPTCONTEXT_HANDLE scriptContextInfoAddress,
