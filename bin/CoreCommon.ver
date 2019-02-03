@@ -23,7 +23,7 @@
 /// These fields must be explicitly set in the source.
 /// Note: VER_PRODUCTBUILD is always set to 0.
 
-#define VER_COMPANYNAME_STR         "Microsoft Corporation"
+#define VER_COMPANYNAME_STR         "Kode"
 
 #define VER_FILEFLAGSMASK           VS_FFI_FILEFLAGSMASK
 #define VER_FILEOS                  VOS_NT_WINDOWS32
