@@ -4,7 +4,7 @@
 //-------------------------------------------------------------------------------------------------------
 #include <windows.h>
 
-#define VER_PRODUCTNAME                 L"Microsoft \x00ae Chakra Core"
+#define VER_PRODUCTNAME                 L"Krom"
 #define VER_FILESUBTYPE                 VFT2_UNKNOWN
 #define VER_INTERNALNAME_STR            "chakracore.dll"
 #define VER_FILETYPE                    VFT_DLL
@@ -13,7 +13,7 @@
 
 #include "jserr.rc2"
 
-#ifdef ENABLE_JS_ETW
-#include "Microsoft-Scripting-chakra-InstrumentationEvents.rc"
-#endif
+// #ifdef ENABLE_JS_ETW
+// #include "Microsoft-Scripting-chakra-InstrumentationEvents.rc"
+// #endif
 

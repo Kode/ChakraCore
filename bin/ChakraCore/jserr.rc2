@@ -1,0 +1,979 @@
+
+
+
+
+
+
+
+
+
+
+
+STRINGTABLE DISCARDABLE
+BEGIN
+        
+
+
+
+
+#pragma once
+
+
+
+
+
+
+
+
+        
+        
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+0 ""
+
+5 "Invalid procedure call or argument"
+6 "Overflow"
+7 "Out of memory"
+9 "Subscript out of range"
+10 "This array is fixed or temporarily locked"
+
+13 "Type mismatch"
+
+
+
+
+
+28 "Out of stack space"
+
+
+48 "Error in loading DLL"
+
+51 "Internal error"
+
+53 "File not found"
+
+
+57 "Device I/O error"
+58 "File already exists"
+
+61 "Disk full"
+
+
+67 "Too many files"
+
+70 "Permission denied"
+
+
+75 "Path/File access error"
+76 "Path not found"
+
+
+
+
+
+322 "Can't create necessary temporary file"
+
+
+
+
+429 "Automation server can't create object"
+430 "Class doesn't support Automation"
+432 "File name or class name not found during Automation operation"
+438 "Object doesn't support this property or method"
+
+
+
+445 "Object doesn't support this action"
+446 "Object doesn't support named arguments"
+447 "Object doesn't support current locale setting"
+448 "Named argument not found"
+449 "Argument not optional"
+450 "Wrong number of arguments or invalid property assignment"
+451 "Object not a collection"
+
+453 "Specified DLL function not found"
+
+
+
+458 "Variable uses an Automation type not supported in JavaScript"
+462 "The remote server machine does not exist or is unavailable"
+
+
+
+
+
+
+
+
+
+507 "An exception occurred"
+
+5000 "Cannot assign to 'this'"
+5001 "Number expected"
+5002 "Function expected"
+5003 "Cannot assign to a function result"
+5004 "Cannot index object"
+5005 "String expected"
+5006 "Date object expected"
+5007 "Object expected"
+5008 "Invalid left-hand side in assignment"
+5009 "Undefined identifier"
+5010 "Boolean expected"
+
+
+5011 "Can't execute code from a freed script"
+
+
+1+20000 "Can't execute code from a freed script"
+
+5012 "Object member expected"
+5013 "VBArray expected"
+5014 "JavaScript object expected"
+5015 "Enumerator object expected"
+5016 "Regular Expression object expected"
+5017 "Syntax error in regular expression"
+5018 "Unexpected quantifier"
+5019 "Expected ']' in regular expression"
+5020 "Expected ')' in regular expression"
+5021 "Invalid range in character set"
+5022 "Exception thrown and not caught"
+5023 "Function does not have a valid prototype object"
+5024 "The URI to be encoded contains an invalid character"
+5025 "The URI to be decoded is not a valid encoding"
+5026 "The number of fractional digits is out of range"
+5027 "The precision is out of range"
+5028 "Array or arguments object expected"
+5029 "Array length must be a finite positive integer"
+5030 "Array length must be assigned a finite positive integer"
+5031 "Array object expected"
+
+
+5034 "Circular reference in value argument not supported"
+5035 "Invalid replacer argument"
+5036 ""
+5037 ""
+5038 "Argument list too large to apply"
+5039 "Redeclaration of const property"
+5040 "Cyclic __proto__ value"
+
+5041 "Object member not configurable" 
+5042 "Variable undefined in strict mode" 
+5043 "'arguments', 'callee' and 'caller' are restricted function properties and cannot be accessed in this context"
+
+5045 "Assignment to read-only properties is not allowed in strict mode" 
+5046 "Cannot create property for a non-extensible object" 
+
+5047 "Object expected"
+5048 "Object expected"
+5049 "Object expected"
+5050 "Object expected"
+5051 "Function expected"
+5052 "Function expected"
+5053 "Invalid property descriptor: cannot both specify accessors and a 'value' attribute"
+
+5054 "'this' is null or undefined" 
+5055 "Object expected" 
+5056 "Function expected" 
+5057 "String expected" 
+5058 "Boolean expected" 
+5059 "Date expected" 
+5060 "Number expected" 
+5061 "VBArray expected" 
+5062 "JavaScript object expected" 
+5063 "Enumerator object expected" 
+5064 "RegExp object expected" 
+
+5065 "Invalid function argument"
+5066 "Object expected"
+5067 "JavaScript object expected"
+5068 "Function expected"
+5069 "VBArray expected"
+5070 "Object expected"
+5071 "Object expected"
+5072 "Invalid 'length' property"
+5073 "Array or arguments object expected"
+
+5074 "Invalid Operand"
+5075 "Invalid Operand"
+5076 "Invalid property descriptor"
+
+5077 "Cannot define property: object is not extensible"
+5078 "Cannot redefine non-configurable property"
+5079 "Cannot modify non-writable property"
+5080 "Cannot modify property: 'length' is not writable" 
+5081 "Cannot define property"
+
+5082 "Typed array constructor argument is invalid"
+5083 "'this' is not a typed array object"
+5084 "Invalid offset/length when creating typed array"
+5085 "Invalid begin/end value in typed array subarray method"
+5086 "Invalid source in typed array set"
+5087 "'this' is not a DataView object"
+5088 "Invalid arguments in DataView"
+5089 "DataView operation access beyond specified buffer length"
+5090 "Invalid arguments in DataView"
+
+5091 "invalid function signature"
+5092 "invalid property signature"
+
+5093 "invalid input parameter type"
+5094 "invalid output parameter"
+
+5096 "Inspectable Object expected" 
+
+5097 "Could not convert argument to type 'char'"
+5098 "Could not convert argument to type 'GUID'"
+5099 "IInspectable expected"
+
+5100 "Could not convert object to struct: object missing expected property"
+
+5101 "Unknown type"
+
+5102 "Function called with too few arguments"
+5103 "Type is not constructible"
+5104 "Could not convert value to PropertyValue: Type not supported by PropertyValue"
+5105 "Could not convert value to IInspectable: Type not supported by IInspectable"
+
+5106 "Could not convert Date to Windows.Foundation.DateTime: value outside of valid range"
+5107 "Could not convert value to Windows.Foundation.TimeSpan: value outside of valid range"
+
+5108 "Invalid access to already released Inspectable Object" 
+5109 "Cannot release already released Inspectable Object" 
+5110 "'this' is not of the expected type" 
+
+5111 "Illegal length and size specified for the array"
+
+5112 "An unexpected failure occurred while trying to obtain metadata information"
+5113 "Use before declaration"
+
+5114 "Cannot re-initialize 'this', object already initialized"
+5115 "Cannot initialize 'this' because it is a non-extensible object"
+5116 "'this' is not of the expected type"
+5117 "'key' is not an object"
+
+5118 "Option value is outside of valid range"
+5119 "Object or string expected"
+5120 "Function is not a constructor"
+
+
+5121 "Locale is not well-formed"
+5122 "Currency code is invalid"
+5123 "Currency code was not specified"
+5124 "Invalid Date"
+5125 "Intl is not available."
+5126 "Intl operation '%s' is not implemented."
+
+5130 "argument out of range"
+5131 "Function is not a constructor"
+5132 "Array Iterator expected" 
+5133 "Map Iterator expected" 
+5134 "Set Iterator expected" 
+5135 "String Iterator expected" 
+
+5140 "Argument cannot be spread; expected Array or Object with a 'length' property"
+5141 "Argument cannot be spread; the 'length' property must be a number or convert to a number"
+
+5145 "Missing or invalid 'super' binding"
+5146 "Unable to delete property with a super reference"
+
+5147 "The ArrayBuffer is detached."
+5148 "Compiling asm.js failed."
+5149 "Can't set the prototype of this object."
+
+
+5200 "Status is 'error', but getResults did not return an error"
+5201 "Missing or invalid status parameter passed to completed handler"
+5202 "Missing or invalid sender parameter passed to completed handler"
+
+5600 "Invalid code point"
+5601 "Invalid normalization form. Expected one of: ['NFC', 'NFD', 'NFKC', 'NFKD']"
+5602 "Failed to normalize: invalid or missing unicode character."
+5603 "Failed to normalize string."
+5604 "ArrayBuffer object expected"
+5605 "Symbol expected"
+5606 "Symbol expected" 
+5607 "Expected '}' in regular expression"
+
+5608 "Proxy requires more than 1 arguments"
+5609 "Invalid Proxy argument"
+5610 "Revocable method requires Proxy object"
+5611 "trap called on a revoked Proxy object"
+5612 "Invariant check failed for proxy trap"
+
+5613 "Object used to resolve a promise creates a circular resolution"
+5614 "Promise expected"
+5615 "Promise expected" 
+5616 "Failed to set prototype"
+5617 "Object internal state is not initialized"
+
+5618 ""
+
+5627 "Constructor expected"
+
+32812 "The specified date is not available in the current locale's calendar"
+
+5628 "Multiple calls to 'super' in a class constructor are not allowed"
+5629 "Unexpected call to 'super' in a base class constructor"
+5630 "Derived class constructor can return only object or undefined"
+5631 "Class static member cannot be named 'prototype'"
+5632 "Class constructor cannot be called without the new keyword"
+
+5633 "Expecting Bool32x4 values"
+5634 "Expecting Bool16x8 values"
+5635 "Expecting Bool8x16 values"
+5636 "Expecting Int16x8 values"
+5637 "Expecting UInt32x4 values"
+5638 "Expecting UInt16x8 values"
+5639 "Expecting UInt8x16 values"
+
+5640 "First argument cannot be a RegExp"
+5641 "Return value of RegExp 'exec' is not an Object and is not null"
+
+5642 "Proxy trap returned false"
+5643 "Module export cannot be resolved"
+5644 "Module import cannot be resolved"
+5645 "Module has too many import/export definitions"
+5646 "HostResolveImportedModule failed to resolve module"
+5647 "Resolve export failed due to circular reference or resolved exports"
+
+5648 "Cannot convert null or undefined to object"
+5649 "Cannot be converted to a number"
+
+
+
+5650 "JSON.parse syntax error"
+5651 "JSON.parse syntax error"
+5652 "JSON.parse syntax error"
+5653 "JSON.parse syntax error"
+5654 "JSON.parse syntax error"
+5655 "JSON.parse syntax error"
+5656 "JSON.parse syntax error"
+5657 "JSON.parse syntax error"
+
+
+5658 "invalid hint"
+
+5659 "Module Namespace object expected" 
+5660 "List Iterator expected" 
+5661 "SharedArrayBuffer object expected"
+5662 "Atomics function called with invalid typed array object"
+5663 "Access index is out of range"
+5664 "The operation is not supported on this typed array type"
+5665 "Current agent cannot be suspended"
+5666 "Cannot delete non-configurable property"
+5667 "Cannot redefine property"
+5668 "Array or array-like object expected"
+5669 "Encountered a non-recoverable OOM"
+5670 "String length is out of bound"
+5671 "Invalid iterable object"
+5672 "Invalid iterator object"
+5673 ""
+5674 "Invalid regular expression: invalid escape in unicode pattern"
+5675 "Regular expression cannot have more than 32,767 capturing groups"
+
+
+5700 "Host may not have set any promise continuation callback. Promises may not be executed."
+
+
+5800 "Built In functions are not available."
+
+
+7000 "Compilation failed."
+7001 "Unreachable Code"
+7002 "BufferSource expected"
+7003 "WebAssembly.Module expected"
+7004 "Data segment is out of range"
+7005 "Cannot export mutable global"
+ 
+7007 "Global initialization does not support forward reference"
+7008 "WebAssembly.Memory object expected"
+7009 "Invalid WebAssembly type conversion"
+7010 "Division by zero"
+7011 "AnyFunc expected"
+7012 "WebAssembly.Table object expected"
+7013 "WebAssembly exported function expected"
+7014 "Function called with invalid signature"
+7015 "Element segment is out of range"
+7016 "Table index is out of range"
+7017 "Memory index is out of range"
+7018 "Invalid arguments to instantiate"
+7019 "Linking failed."
+7020 "Response expected"
+7021 "Not allowed to detach WebAssembly.Memory buffer"
+7022 "WebAssembly.Memory can only grow"
+7023 "Function called with invalid signature"
+7024 "Failed to create WebAssembly.Memory"
+7025 "WebAssembly.Instance object expected"
+
+7026 "Import module is invalid"
+7027 "Import is invalid"
+7028 "Invalid initial size"
+7029 "Invalid maximum size"
+7030 "Invalid memory type"
+7031 "Atomic memory access is unaligned"
+7032 "Shared memory must have a maximum size"
+
+
+7200 "Wabt Error."
+
+        
+        
+
+        
+        
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+0+10000 ""
+
+5+10000 ""
+6+10000 ""
+7+10000 ""
+9+10000 ""
+10+10000 ""
+
+13+10000 ""
+
+
+
+
+
+28+10000 ""
+
+
+48+10000 ""
+
+51+10000 ""
+
+53+10000 ""
+
+
+57+10000 ""
+58+10000 ""
+
+61+10000 ""
+
+
+67+10000 ""
+
+70+10000 ""
+
+
+75+10000 ""
+76+10000 ""
+
+
+
+
+
+322+10000 ""
+
+
+
+
+429+10000 ""
+430+10000 ""
+432+10000 ""
+438+10000 "Object doesn't support property or method '%s'"
+
+
+
+445+10000 ""
+446+10000 ""
+447+10000 ""
+448+10000 ""
+449+10000 "Argument to the function '%s' is not optional"
+450+10000 ""
+451+10000 ""
+
+453+10000 ""
+
+
+
+458+10000 ""
+462+10000 ""
+
+
+
+
+
+
+
+
+
+507+10000 ""
+
+5000+10000 ""
+5001+10000 "'%s' is not a number"
+5002+10000 "'%s' is not a function"
+5003+10000 ""
+5004+10000 "'%s' is not an indexable object"
+5005+10000 "'%s' is not a string"
+5006+10000 "'%s' is not a date object"
+5007+10000 "'%s' is null or not an object"
+5008+10000 ""
+5009+10000 "'%s' is not defined"
+5010+10000 "'%s' is not a boolean"
+
+
+5011+10000 ""
+
+
+1+10000+20000 ""
+
+5012+10000 "Cannot delete '%s'"
+5013+10000 "'%s' is not a VBArray"
+5014+10000 "'%s' is not a JavaScript object"
+5015+10000 "'%s' is not an enumerator object"
+5016+10000 "'%s' is not a regular expression object"
+5017+10000 ""
+5018+10000 ""
+5019+10000 ""
+5020+10000 ""
+5021+10000 ""
+5022+10000 ""
+5023+10000 ""
+5024+10000 ""
+5025+10000 ""
+5026+10000 ""
+5027+10000 ""
+5028+10000 "%s is not an Array or arguments object"
+5029+10000 ""
+5030+10000 ""
+5031+10000 "%s is not an Array object"
+
+
+5034+10000 ""
+5035+10000 ""
+5036+10000 "'%s' attribute on the property descriptor cannot be set to 'true' on this object"
+5037+10000 "'%s' attribute on the property descriptor cannot be set to 'false' on this object"
+5038+10000 ""
+5039+10000 "Redeclaration of const '%s'"
+5040+10000 ""
+
+5041+10000 "Calling delete on '%s' is not allowed in strict mode" 
+5042+10000 "" 
+5043+10000 ""
+
+5045+10000 "" 
+5046+10000 "" 
+
+5047+10000 "Unable to set property '%s' of undefined or null reference"
+5048+10000 "Unable to get property '%s' of undefined or null reference"
+5049+10000 "Unable to delete property '%s' of undefined or null reference"
+5050+10000 "Unable to access property '%s': type 'VarDate' does not support user-defined properties"
+5051+10000 "The value of the property '%s' is not a Function object"
+5052+10000 "The value of the property '%s' is null or undefined, not a Function object"
+5053+10000 ""
+
+5054+10000 "%s: 'this' is null or undefined" 
+5055+10000 "%s: 'this' is not an Object" 
+5056+10000 "%s: 'this' is not a Function object" 
+5057+10000 "%s: 'this' is not a String object" 
+5058+10000 "%s: 'this' is not a Boolean object" 
+5059+10000 "%s: 'this' is not a Date object" 
+5060+10000 "%s: 'this' is not a Number object" 
+5061+10000 "%s: 'this' is not a VBArray object" 
+5062+10000 "%s: 'this' is not a JavaScript object" 
+5063+10000 "%s: 'this' is not an Enumerator object" 
+5064+10000 "%s: 'this' is not a RegExp object" 
+
+5065+10000 "%s: invalid argument"
+5066+10000 "%s: argument is not an Object"
+5067+10000 "%s: argument is not a JavaScript object"
+5068+10000 "%s: argument is not a Function object"
+5069+10000 "%s: argument is not a VBArray object"
+5070+10000 "%s: argument is null or undefined"
+5071+10000 "%s: argument is not an Object and is not null"
+5072+10000 "%s: argument does not have a valid 'length' property"
+5073+10000 "%s: Array or arguments object expected"
+
+5074+10000 "Invalid operand to '%s': Object expected"
+5075+10000 "Invalid operand to '%s': Function expected"
+5076+10000 "Invalid descriptor for property '%s'"
+
+5077+10000 "Cannot define property '%s': object is not extensible"
+5078+10000 "Cannot redefine non-configurable property '%s'"
+5079+10000 "Cannot modify non-writable property '%s'"
+5080+10000 "Cannot modify property '%s': 'length' is not writable" 
+5081+10000 "Cannot define property '%s'"
+
+5082+10000 ""
+5083+10000 ""
+5084+10000 ""
+5085+10000 ""
+5086+10000 ""
+5087+10000 ""
+5088+10000 "Required argument %s in DataView method is not specified"
+5089+10000 ""
+5090+10000 "DataView constructor argument %s is invalid"
+
+5091+10000 "The function '%s' has an invalid signature and cannot be called"
+5092+10000 "The property '%s' has an invalid signature and cannot be accessed"
+
+5093+10000 "The runtimeclass %s that has Windows.Foundation.IPropertyValue as default interface is not supported as an input parameter type"
+5094+10000 "The object with interface Windows.Foundation.IPropertyValue that has runtimeclass name %s is not supported as an output parameter"
+
+5096+10000 "%s: 'this' is not an Inspectable Object" 
+
+5097+10000 "%s: could not convert argument to type 'char'"
+5098+10000 "%s: could not convert argument to type 'GUID'"
+5099+10000 "%s: could not convert return value to IInspectable"
+
+5100+10000 "Could not convert object to struct: object missing expected property '%s'"
+
+5101+10000 "Type '%s' not found"
+
+5102+10000 "%s: function called with too few arguments"
+5103+10000 "%s: type is not constructible"
+5104+10000 "Could not convert value to PropertyValue: %s not supported by PropertyValue"
+5105+10000 "Could not convert value to IInspectable: %s not supported by IInspectable"
+
+5106+10000 ""
+5107+10000 ""
+
+5108+10000 "%s: The Inspectable object 'this' is released and cannot be accessed" 
+5109+10000 "" 
+5110+10000 "'this' is not of expected type: %s" 
+
+5111+10000 ""
+
+5112+10000 "%s: an unexpected failure occurred while trying to obtain metadata information"
+5113+10000 ""
+
+5114+10000 "Cannot initialize '%s' object: 'this' is already initialized as '%s' object"
+5115+10000 "Cannot initialize '%s' object: 'this' is not extensible"
+5116+10000 "%s: 'this' is not a %s object"
+5117+10000 "%s: 'key' is not an object"
+
+5118+10000 "Option value '%s' for '%s' is outside of valid range. Expected: %s"
+5119+10000 "%s is not an object or a string"
+5120+10000 "Function '%s' is not a constructor"
+
+
+5121+10000 "Locale '%s' is not well-formed"
+5122+10000 "Currency code '%s' is invalid"
+5123+10000 ""
+5124+10000 ""
+5125+10000 ""
+5126+10000 ""
+
+5130+10000 "%s: argument out of range"
+5131+10000 ""
+5132+10000 "%s: 'this' is not a Array Iterator object" 
+5133+10000 "%s: 'this' is not a Map Iterator object" 
+5134+10000 "%s: 'this' is not a Set Iterator object" 
+5135+10000 "%s: 'this' is not a String Iterator object" 
+
+5140+10000 "%s: argument cannot be spread; expected Array or Object with a 'length' property"
+5141+10000 "%s: argument cannot be spread; the 'length' property must be a number or convert to a number"
+
+5145+10000 ""
+5146+10000 "Unable to delete property '%s' which has a super reference"
+
+5147+10000 "%s: The ArrayBuffer is detached."
+5148+10000 "%s: Compiling asm.js failed."
+5149+10000 "%s: Can't set the prototype of this object."
+
+
+5200+10000 ""
+5201+10000 ""
+5202+10000 ""
+
+5600+10000 "Invalid code point %s"
+5601+10000 "Normalization form '%s' is invalid. Expected one of: ['NFC', 'NFD', 'NFKC', 'NFKD']."
+5602+10000 "Failed to normalize: invalid or missing unicode character at index %d."
+5603+10000 "Failed to normalize string."
+5604+10000 "%s is not an ArrayBuffer"
+5605+10000 "'%s' is not a symbol"
+5606+10000 "%s: 'this' is not a Symbol object" 
+5607+10000 ""
+
+5608+10000 ""
+5609+10000 "Proxy argument %s is not a valid object"
+5610+10000 "Revocable method requires Proxy object"
+5611+10000 "method %s is called on a revoked Proxy object"
+5612+10000 "Invariant check failed for %s proxy trap"
+
+5613+10000 ""
+5614+10000 "'%s' is not a promise"
+5615+10000 "%s: 'this' is not a Promise object" 
+5616+10000 "Failed to set prototype"
+5617+10000 "%s: Object internal state is not initialized"
+
+5618+10000 "%s: Cannot execute generator function because it is currently executing"
+
+5627+10000 "'%s' is not a constructor"
+
+32812+10000 ""
+
+5628+10000 ""
+5629+10000 ""
+5630+10000 ""
+5631+10000 ""
+5632+10000 "%s: cannot be called without the new keyword"
+
+5633+10000 "SIMD.Bool32x4.%s: Invalid SIMD types for operation"
+5634+10000 "SIMD.Bool16x8.%s: Invalid SIMD types for operation"
+5635+10000 "SIMD.Bool8x16.%s: Invalid SIMD types for operation"
+5636+10000 "SIMD.Int16x8.%s: Invalid SIMD types for operation"
+5637+10000 "SIMD.Uint32x4.%s: Invalid SIMD types for operation"
+5638+10000 "SIMD.Uint16x8.%s: Invalid SIMD types for operation"
+5639+10000 "SIMD.Uint8x16.%s: Invalid SIMD types for operation"
+
+5640+10000 "%s: first argument cannot be a RegExp"
+5641+10000 "%s: Return value of RegExp 'exec' is not an Object and is not null"
+
+5642+10000 "Proxy trap `%s` returned false"
+5643+10000 "Module export %s cannot be resolved"
+5644+10000 "Module import %s cannot be resolved"
+5645+10000 "Module has too many import/export definitions"
+5646+10000 "HostResolveImportedModule failed to resolve module with specifier %s"
+5647+10000 "Resolve export %s failed due to circular reference or resolved exports"
+
+5648+10000 ""
+5649+10000 "%s: cannot be converted to a number"
+
+
+
+5650+10000 "JSON.parse Error: Unexpected input at position:%s"
+5651+10000 "JSON.parse Error: Expected ':' at position:%s"
+5652+10000 "JSON.parse Error: Expected ']' at position:%s"
+5653+10000 "JSON.parse Error: Expected '}' at position:%s"
+5654+10000 "JSON.parse Error: Invalid number at position:%s"
+5655+10000 "JSON.parse Error: Invalid character at position:%s"
+5656+10000 "JSON.parse Error: Expected hexadecimal digit at position:%s"
+5657+10000 "JSON.parse Error: Unterminated string constant at position:%s"
+
+
+5658+10000 "%s: invalid hint"
+
+5659+10000 "%s: 'this' is not a Module Namespace object" 
+5660+10000 "%s: 'this' is not a List Iterator object" 
+5661+10000 "%s is not a SharedArrayBuffer"
+5662+10000 ""
+5663+10000 ""
+5664+10000 ""
+5665+10000 ""
+5666+10000 "Cannot delete non-configurable property '%s'"
+5667+10000 "Cannot redefine property '%s'"
+5668+10000 "%s: argument is not an array or array-like object"
+5669+10000 ""
+5670+10000 ""
+5671+10000 "%s : Invalid iterable object"
+5672+10000 "%s : Invalid iterator object"
+5673+10000 "Invalid property descriptor: accessors not supported on this object"
+5674+10000 ""
+5675+10000 ""
+
+
+5700+10000 ""
+
+
+5800+10000 ""
+
+
+7000+10000 "%s"
+7001+10000 ""
+7002+10000 "%s is not a BufferSource"
+7003+10000 "%s is not a WebAssembly.Module"
+7004+10000 ""
+7005+10000 ""
+ 
+7007+10000 ""
+7008+10000 "%s is not a WebAssembly.Memory"
+7009+10000 "Invalid WebAssembly type conversion %s to %s"
+7010+10000 ""
+7011+10000 "%s is not AnyFunc"
+7012+10000 "%s is not a WebAssembly.Table"
+7013+10000 "%s is not a WebAssembly exported function"
+7014+10000 "%s called with invalid signature"
+7015+10000 ""
+7016+10000 ""
+7017+10000 ""
+7018+10000 ""
+7019+10000 "%s"
+7020+10000 "%s is not a Response"
+7021+10000 ""
+7022+10000 ""
+7023+10000 "Cannot link import %s in link table due to a signature mismatch"
+7024+10000 ""
+7025+10000 "%s is not a WebAssembly.Instance"
+
+7026+10000 "Import module '%s' is invalid"
+7027+10000 "Import '%s.%s' is invalid. Expected type %s"
+7028+10000 "Imported %s initial size (%u) is smaller than declared (%u)"
+7029+10000 "Imported %s maximum size (%u) is larger than declared (%u)"
+7030+10000 "Imported %s type is %s, expected %s"
+7031+10000 ""
+7032+10000 ""
+
+
+7200+10000 "%s"
+
+        
+        
+
+        
+        
+
+
+
+
+
+
+
+
+1001 "Out of memory"
+1002 "Syntax error"
+1003 "Expected ':'"
+1004 "Expected ';'"
+1005 "Expected '('"
+1006 "Expected ')'"
+1007 "Expected ']'"
+1008 "Expected '{'"
+1009 "Expected '}'"
+1010 "Expected identifier"
+1011 "Expected '='"
+1012 "Expected '/'"
+1013 "Invalid number"
+1014 "Invalid character"
+1015 "Unterminated string constant"
+1016 "Unterminated comment"
+1017 "Unexpected identifier after numeric literal"
+
+1018 "'return' statement outside of function"
+1019 "Can't have 'break' outside of loop"
+1020 "Can't have 'continue' outside of loop"
+
+1023 "Expected hexadecimal digit"
+1024 "Expected 'while'"
+1025 "Label redefined"
+1026 "Label not found"
+1027 "'default' can only appear once in a 'switch' statement"
+1028 "Expected identifier, string or number"
+1029 "Too many arguments"
+
+1031 "Expected constant"
+
+1033 "Expected 'catch'"
+1034 "Expected 'var'"
+1035 "'throw' must be followed by an expression on the same source line"
+
+
+1037 "'with' statements are not allowed in strict mode" 
+1038 "Duplicate formal parameter names not allowed in strict mode" 
+1039 "Octal numeric literals and escape characters not allowed in strict mode" 
+1041 "Invalid usage of 'eval' in strict mode" 
+1042 "Invalid usage of 'arguments' in strict mode" 
+1045 "Calling delete on expression not allowed in strict mode" 
+1046 "Multiple definitions of a property not allowed in strict mode" 
+1047 "In strict mode, function declarations cannot be nested inside a statement or block. They may only appear at the top level or directly inside a function body."
+1048 "The use of a keyword for an identifier is invalid"
+1049 "The use of a future reserved word for an identifier is invalid"
+1050 "The use of a future reserved word for an identifier is invalid. The identifier name is reserved in strict mode."
+1051 "Setter functions must have exactly one parameter"
+1052 "Let/Const redeclaration" 
+1053 "Const must be initialized"
+1054 "Declaration outside statement context"
+1055 "Assignment to const"
+1056 "Unicode escape sequence value is higher than 0x10FFFF"
+1057 "Invalid use of the ... operator. Spread can only be used in call arguments or an array literal."
+1058 "Invalid use of the 'super' keyword"
+1059 "The 'super' keyword cannot be used at global scope"
+1060 "The 'super' keyword cannot be used in an indirect eval() call"
+1061 "The 'super' keyword cannot be used in a globally scoped eval() call"
+1062 "Expected '=>'"
+
+1063 "Invalid codepoint value in the escape sequence."
+1064 "Closing curly brace ('}') expected."
+1065 "The rest parameter must be the last parameter in a formals list."
+1066 "The rest parameter cannot have a default initializer."
+1067 "Unexpected ... operator"
+
+1068 "Destructuring declarations must have an initializer"
+1069 "Destructuring rest variables must be in the last position of the expression"
+1070 "Unexpected default initializer"
+1071 "Unexpected operator in destructuring expression"
+1072 "Destructuring expressions can only have identifier references"
+
+1073 "'yield' expressions are not allowed in 'try', 'catch', or 'finally' blocks"
+1074 "Class constructor may not be a generator"
+1075 "Invalid destructuring assignment target"
+1076 "Duplicate formal parameter names not allowed in this context"
+1077 "Destructuring declarations cannot have an initializer"
+
+1079 "Invalid use of the 'new.target' keyword"
+1080 "for-in loop head declarations cannot have an initializer"
+1081 "for-of loop head declarations cannot have an initializer"
+1082 "Cannot apply strict mode on functions with non-simple parameter list"
+
+1083 "'await' expression not allowed in this context"
+
+1084 "Getter functions must have no parameters"
+
+1085 "Invalid unary operator on the left hand side of exponentiation (**) operator"
+
+1086 "Module import or export statement unexpected here"
+1087 "Unable to resolve module export name"
+
+1088 "'let' is not an allowed identifier in lexical declarations"
+
+        
+
+        4096    "JavaScript compilation error"
+        4097        "JavaScript runtime error"
+        4098       "Unknown runtime error"
+
+        6000                    "Infinity"
+        6001               "-Infinity"
+END
