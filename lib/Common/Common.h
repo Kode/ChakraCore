@@ -144,7 +144,7 @@ class AutoExpDummyClass
 
 #pragma warning(push)
 #if defined(PROFILE_RECYCLER_ALLOC) || defined(HEAP_TRACK_ALLOC) || defined(ENABLE_DEBUG_CONFIG_OPTIONS)
-#ifdef _MSC_VER
+#if defined(_MSC_VER) && _MSC_VER < 1923
 #include <typeinfo.h>
 #else
 #include <typeinfo>
