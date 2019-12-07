@@ -8,8 +8,8 @@
 #include "../WasmReader/WasmReaderPch.h"
 #include "Language/WebAssemblySource.h"
 
-namespace Js
-{
+using namespace Js;
+
 Var WebAssembly::EntryCompile(RecyclableObject* function, CallInfo callInfo, ...)
 {
     PROBE_STACK(function->GetScriptContext(), Js::Constants::MinStackDefault);
@@ -92,9 +92,9 @@ Var WebAssembly::EntryInstantiate(RecyclableObject* function, CallInfo callInfo,
             importObject = args[2];
         }
 
-        if (WebAssemblyModule::Is(args[1]))
+        if (VarIs<WebAssemblyModule>(args[1]))
         {
-            resultObject = WebAssemblyInstance::CreateInstance(WebAssemblyModule::FromVar(args[1]), importObject);
+            resultObject = WebAssemblyInstance::CreateInstance(VarTo<WebAssemblyModule>(args[1]), importObject);
         }
         else
         {
@@ -227,11 +227,16 @@ Var WebAssembly::EntryQueryResponse(RecyclableObject* function, CallInfo callInf
         JavascriptError::ThrowTypeError(scriptContext, WASMERR_NeedResponse);
     }
 
-    RecyclableObject* arrayBufferFunc = RecyclableObject::FromVar(arrayBufferProp);
-    Var arrayBufferRes = CALL_FUNCTION(scriptContext->GetThreadContext(), arrayBufferFunc, Js::CallInfo(CallFlags_Value, 1), responseObject);
+    RecyclableObject* arrayBufferFunc = VarTo<RecyclableObject>(arrayBufferProp);
+    Var arrayBufferRes = nullptr;
+    BEGIN_SAFE_REENTRANT_CALL(scriptContext->GetThreadContext())
+    {
+        arrayBufferRes = CALL_FUNCTION(scriptContext->GetThreadContext(), arrayBufferFunc, Js::CallInfo(CallFlags_Value, 1), responseObject);
+    }
+    END_SAFE_REENTRANT_CALL
 
     // Make sure res.arrayBuffer() is a Promise
-    if (!JavascriptPromise::Is(arrayBufferRes))
+    if (!VarIs<JavascriptPromise>(arrayBufferRes))
     {
         JavascriptError::ThrowTypeError(scriptContext, WASMERR_NeedResponse);
     }
@@ -240,11 +245,11 @@ Var WebAssembly::EntryQueryResponse(RecyclableObject* function, CallInfo callInf
 
 bool WebAssembly::IsResponseObject(Var responseObject, ScriptContext* scriptContext)
 {
-    if (!RecyclableObject::Is(responseObject))
+    if (!VarIs<RecyclableObject>(responseObject))
     {
         return false;
     }
-    TypeId typeId = RecyclableObject::FromVar(responseObject)->GetTypeId();
+    TypeId typeId = VarTo<RecyclableObject>(responseObject)->GetTypeId();
     if (!CONFIG_FLAG(WasmIgnoreResponse))
     {
         return scriptContext->IsWellKnownHostType<WellKnownHostType_Response>(typeId) && typeId != TypeIds_Undefined;
@@ -266,13 +271,13 @@ Var WebAssembly::TryResolveResponse(RecyclableObject* function, Var thisArg, Var
         // We already have a response object, query it now
         responsePromise = CALL_ENTRYPOINT_NOASSERT(EntryQueryResponse, function, Js::CallInfo(CallFlags_Value, 2), thisArg, responseArg);
     }
-    else if (JavascriptPromise::Is(responseArg))
+    else if (VarIs<JavascriptPromise>(responseArg))
     {
         JavascriptPromise* promise = (JavascriptPromise*)responseArg;
         // Wait until this promise resolves and then try to query the response object (if it's a response object)
         responsePromise = JavascriptPromise::CreateThenPromise(promise, library->GetWebAssemblyQueryResponseFunction(), library->GetThrowerFunction(), scriptContext);
     }
-    if (responsePromise && !JavascriptPromise::Is(responsePromise))
+    if (responsePromise && !VarIs<JavascriptPromise>(responsePromise))
     {
         AssertMsg(UNREACHED, "How did we end up with something other than a promise here ?");
         JavascriptError::ThrowTypeError(scriptContext, WASMERR_NeedResponse);
@@ -283,21 +288,29 @@ Var WebAssembly::TryResolveResponse(RecyclableObject* function, Var thisArg, Var
 uint32
 WebAssembly::ToNonWrappingUint32(Var val, ScriptContext * ctx)
 {
-    double i = JavascriptConversion::ToInteger(val, ctx);
-    if (i < 0 || i > (double)UINT32_MAX)
+    double i = JavascriptConversion::ToNumber(val, ctx);
+    if (
+        JavascriptNumber::IsNan(i) ||
+        JavascriptNumber::IsPosInf(i) ||
+        JavascriptNumber::IsNegInf(i) ||
+        i < 0 ||
+        i > (double)UINT32_MAX
+    )
     {
-        JavascriptError::ThrowRangeError(ctx, JSERR_ArgumentOutOfRange);
+        JavascriptError::ThrowTypeError(ctx, JSERR_NeedNumber);
     }
-    return (uint32)i;
+    return (uint32)JavascriptConversion::ToInteger(i);
 }
 
 void
 WebAssembly::CheckSignature(ScriptContext * scriptContext, Wasm::WasmSignature * sig1, Wasm::WasmSignature * sig2)
 {
+    JIT_HELPER_NOT_REENTRANT_NOLOCK_HEADER(Op_CheckWasmSignature);
     if (!sig1->IsEquivalent(sig2))
     {
         JavascriptError::ThrowWebAssemblyRuntimeError(scriptContext, WASMERR_SignatureMismatch);
     }
+    JIT_HELPER_END(Op_CheckWasmSignature);
 }
 
 uint
@@ -306,5 +319,4 @@ WebAssembly::GetSignatureSize()
     return sizeof(Wasm::WasmSignature);
 }
 
-}
 #endif // ENABLE_WASM

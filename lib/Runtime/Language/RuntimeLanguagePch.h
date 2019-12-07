@@ -26,13 +26,18 @@
 #include "Language/DynamicProfileStorage.h"
 #endif
 #include "Language/SourceDynamicProfileManager.h"
+#include "Language/SimpleDataCacheWrapper.h"
 
 #include "Base/EtwTrace.h"
 
 #include "Library/ArgumentsObject.h"
 
 #include "Types/TypePropertyCache.h"
+#include "Library/JavascriptAsyncFromSyncIterator.h"
 #include "Library/JavascriptVariantDate.h"
+#ifdef _CHAKRACOREBUILD
+#include "Library/CustomExternalWrapperObject.h"
+#endif
 #include "Library/JavascriptProxy.h"
 #include "Library/JavascriptSymbolObject.h"
 #include "Library/JavascriptGenerator.h"

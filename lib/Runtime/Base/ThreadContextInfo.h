@@ -68,6 +68,9 @@ public:
     intptr_t GetX86AllNegOnesF4Addr() const;
     intptr_t GetX86AllZerosAddr() const;
     intptr_t GetX86AllOnesF4Addr() const;
+    intptr_t GetX86AllOnesI4Addr() const;
+    intptr_t GetX86AllOnesI8Addr() const;
+    intptr_t GetX86AllOnesI16Addr() const;
     intptr_t GetX86LowBytesMaskAddr() const;
     intptr_t GetX86HighBytesMaskAddr() const;
     intptr_t GetX86DoubleWordSignBitsAddr() const;
@@ -85,6 +88,7 @@ public:
 #endif
 
     void SetValidCallTargetForCFG(PVOID callTargetAddress, bool isSetValid = true);
+    void SetValidCallTargetFile(PVOID callTargetAddress, HANDLE fileHandle, PVOID viewBase, bool isSetValid);
     void ResetIsAllJITCodeInPreReservedRegion();
     bool IsAllJITCodeInPreReservedRegion() const;
 
@@ -113,17 +117,20 @@ public:
 
     bool CanBeFalsy(Js::TypeId typeId) { return typeId == this->wellKnownHostTypeIds[WellKnownHostType_HTMLAllCollection]; }
 
-    bool IsCFGEnabled();
     bool IsClosed();
 
 #if defined(ENABLE_GLOBALIZATION) && defined(_CONTROL_FLOW_GUARD)
-    Js::DelayLoadWinCoreMemory * GetWinCoreMemoryLibrary();
     Js::DelayLoadWinCoreProcessThreads * GetWinCoreProcessThreads();
-
-    Js::DelayLoadWinCoreMemory m_delayLoadWinCoreMemoryLibrary;
     Js::DelayLoadWinCoreProcessThreads m_delayLoadWinCoreProcessThreads;
 #endif
 
+    private:
+        template<bool useFileAPI>
+        void SetValidCallTargetInternal(
+            _In_ PVOID callTargetAddress,
+            _In_opt_ HANDLE fileHandle,
+            _In_opt_ PVOID viewBase,
+            bool isSetValid);
 protected:
     class AutoCloseHandle
     {
@@ -144,9 +151,11 @@ protected:
 
 #pragma warning(push)
 #pragma warning(error: 4440)
+CLANG_WNO_BEGIN("-Wignored-attributes")
 // MSVC will give warning C4440 in case of calling convention redefinition
 template<typename F> void EnsureStdcall(F*) { typedef F __stdcall* T; }
 template<typename F> void EnsureCdecl(F*) { typedef F __cdecl* T; }
+CLANG_WNO_END
 #pragma warning(pop)
 template<typename T>
 uintptr_t ShiftCdeclAddr(const ThreadContextInfo*const context, T* address)
@@ -170,3 +179,6 @@ uintptr_t ShiftAddr(const ThreadContextInfo*const context, T* address)
 
 uintptr_t ShiftAddr(const ThreadContextInfo*const context, uintptr_t address);
 
+#ifndef _GUARD_CHECK_ICALL
+#define _GUARD_CHECK_ICALL _guard_check_icall
+#endif

@@ -302,7 +302,7 @@ MACRO_EXTEND_WMS( Trunc_Db                   , Double2         , None           
 MACRO_EXTEND_WMS( Trunc_Flt                  , Float2          , None            )
 MACRO_EXTEND_WMS( Nearest_Db                 , Double2         , None            )
 MACRO_EXTEND_WMS( Nearest_Flt                , Float2          , None            )
-MACRO_EXTEND_WMS( CurrentMemory_Int          , AsmReg1         , None            )
+MACRO_EXTEND_WMS( MemorySize_Int             , AsmReg1         , None            )
 MACRO_EXTEND_WMS( GrowMemory                 , Int2            , None            )
 MACRO_EXTEND    ( Unreachable_Void           , Empty           , OpNoFallThrough )
 MACRO_EXTEND_WMS( Conv_Check_DTI             , Int1Double1     , None            )
@@ -313,6 +313,15 @@ MACRO_EXTEND_WMS( Conv_Check_FTL             , Long1Float1     , None           
 MACRO_EXTEND_WMS( Conv_Check_FTUL            , Long1Float1     , None            )
 MACRO_EXTEND_WMS( Conv_Check_DTL             , Long1Double1    , None            )
 MACRO_EXTEND_WMS( Conv_Check_DTUL            , Long1Double1    , None            )
+
+MACRO_EXTEND_WMS( Conv_Sat_DTI             , Int1Double1     , None            )
+MACRO_EXTEND_WMS( Conv_Sat_FTI             , Int1Float1      , None            )
+MACRO_EXTEND_WMS( Conv_Sat_DTU             , Int1Double1     , None            )
+MACRO_EXTEND_WMS( Conv_Sat_FTU             , Int1Float1      , None            )
+MACRO_EXTEND_WMS( Conv_Sat_FTL             , Long1Float1     , None            )
+MACRO_EXTEND_WMS( Conv_Sat_FTUL            , Long1Float1     , None            )
+MACRO_EXTEND_WMS( Conv_Sat_DTL             , Long1Double1    , None            )
+MACRO_EXTEND_WMS( Conv_Sat_DTUL            , Long1Double1    , None            )
 
 
 // InOut tracing opcodes

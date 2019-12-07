@@ -36,6 +36,11 @@
 #include "Types/PathTypeHandler.h"
 #include "Common/MathUtil.h"
 
+#if ENABLE_NATIVE_CODEGEN
+#include "NativeEntryPointData.h"
+#include "JitTransferData.h"
+#endif
+
 namespace Js
 {
     // The VS2013 linker treats this as a redefinition of an already
@@ -175,6 +180,12 @@ namespace Js
     }
 
     LPCUTF8
+        ParseableFunctionInfo::GetToStringSource(const  char16* reason) const
+    {
+        return this->GetUtf8SourceInfo()->GetSource(reason == nullptr ? _u("ParseableFunctionInfo::GetToStringSource") : reason) + this->PrintableStartOffset();
+    }
+
+    LPCUTF8
     ParseableFunctionInfo::GetStartOfDocument(const char16* reason) const
     {
         return this->GetUtf8SourceInfo()->GetSource(reason == nullptr ? _u("ParseableFunctionInfo::GetStartOfDocument") : reason);
@@ -204,6 +215,17 @@ namespace Js
         return this->m_cbStartOffset;
     }
 
+    uint
+    ParseableFunctionInfo::PrintableStartOffset() const
+    {
+        PrintOffsets* printOffsets = this->GetPrintOffsets();
+        if (printOffsets != nullptr)
+        {
+            return printOffsets->cbStartPrintOffset;
+        }
+        return this->m_cbStartOffset;
+    }
+
     void ParseableFunctionInfo::RegisterFuncToDiag(ScriptContext * scriptContext, char16 const * pszTitle)
     {
 #ifdef ENABLE_SCRIPT_DEBUGGING
@@ -228,19 +250,22 @@ namespace Js
     uint32 FunctionBody::GetCountField(FunctionBody::CounterFields fieldEnum) const
     {
 #if DBG
-        Assert(ThreadContext::GetContextForCurrentThread() || counters.isLockedDown
+        bool isCountersLockedDown = counters.isLockedDown;
+        Assert(ThreadContext::GetContextForCurrentThread() || isCountersLockedDown
             || (ThreadContext::GetCriticalSection()->IsLocked() && this->m_scriptContext->GetThreadContext()->GetFunctionBodyLock()->IsLocked())); // etw rundown
 #endif
         return counters.Get(fieldEnum);
     }
     uint32 FunctionBody::SetCountField(FunctionBody::CounterFields fieldEnum, uint32 val)
     {
-        Assert(!counters.isLockedDown);
+        DebugOnly(bool isCountersLockedDown = counters.isLockedDown);
+        Assert(!isCountersLockedDown || counters.isClosing);
         return counters.Set(fieldEnum, val, this);
     }
     uint32 FunctionBody::IncreaseCountField(FunctionBody::CounterFields fieldEnum)
     {
-        Assert(!counters.isLockedDown);
+        DebugOnly(bool isCountersLockedDown = counters.isLockedDown);
+        Assert(!isCountersLockedDown || counters.isClosing);
         return counters.Increase(fieldEnum, this);
     }
 
@@ -313,20 +338,34 @@ namespace Js
         return FALSE;
     }
 
+    bool
+    FunctionBody::SkipAutoProfileForCoroutine() const
+    {
+        return this->IsCoroutine() && CONFIG_ISENABLED(Js::JitES6GeneratorsFlag);
+    }
+
+    bool
+    FunctionBody::IsGeneratorAndJitIsDisabled() const
+    {
+        return this->IsCoroutine() && !(CONFIG_ISENABLED(Js::JitES6GeneratorsFlag) && !this->GetHasTry() && !this->IsInDebugMode() && !this->IsAsync());
+    }
+
     ScriptContext* EntryPointInfo::GetScriptContext()
     {
         Assert(!IsCleanedUp());
         return this->library->GetScriptContext();
     }
 
+#if ENABLE_NATIVE_CODEGEN
 #if DBG_DUMP | defined(VTUNE_PROFILING)
     void
     EntryPointInfo::RecordNativeMap(uint32 nativeOffset, uint32 statementIndex)
     {
+        auto& nativeOffsetMaps = this->GetNativeEntryPointData()->GetNativeOffsetMaps();
         int count = nativeOffsetMaps.Count();
         if (count)
         {
-            NativeOffsetMap* previous = &nativeOffsetMaps.Item(count-1);
+            NativeEntryPointData::NativeOffsetMap* previous = &nativeOffsetMaps.Item(count-1);
             // Check if the range is still not finished.
             if (previous->nativeOffsetSpan.begin == previous->nativeOffsetSpan.end)
             {
@@ -361,7 +400,7 @@ namespace Js
             return;
         }
 
-        NativeOffsetMap map;
+        NativeEntryPointData::NativeOffsetMap map;
         map.statementIndex = statementIndex;
         map.nativeOffsetSpan.begin = nativeOffset;
         map.nativeOffsetSpan.end = nativeOffset;
@@ -370,7 +409,7 @@ namespace Js
     }
 
 #endif
-
+#endif
     void
     FunctionBody::CopySourceInfo(ParseableFunctionInfo* originalFunctionInfo)
     {
@@ -427,14 +466,14 @@ namespace Js
     }
 
     FunctionBody * FunctionBody::NewFromRecycler(ScriptContext * scriptContext, const char16 * displayName, uint displayNameLength, uint displayShortNameOffset, uint nestedCount,
-        Utf8SourceInfo* sourceInfo, uint uScriptId, Js::LocalFunctionId functionId, Js::PropertyRecordList* boundPropertyRecords, FunctionInfo::Attributes attributes, FunctionBodyFlags flags
+        Utf8SourceInfo* sourceInfo, uint uScriptId, Js::LocalFunctionId functionId, FunctionInfo::Attributes attributes, FunctionBodyFlags flags
 #ifdef PERF_COUNTERS
             , bool isDeserializedFunction
 #endif
             )
     {
             return FunctionBody::NewFromRecycler(scriptContext, displayName, displayNameLength, displayShortNameOffset, nestedCount, sourceInfo,
-            scriptContext->GetThreadContext()->NewFunctionNumber(), uScriptId, functionId, boundPropertyRecords, attributes, flags
+            scriptContext->GetThreadContext()->NewFunctionNumber(), uScriptId, functionId, attributes, flags
 #ifdef PERF_COUNTERS
             , isDeserializedFunction
 #endif
@@ -442,21 +481,21 @@ namespace Js
     }
 
     FunctionBody * FunctionBody::NewFromRecycler(ScriptContext * scriptContext, const char16 * displayName, uint displayNameLength, uint displayShortNameOffset, uint nestedCount,
-        Utf8SourceInfo* sourceInfo, uint uFunctionNumber, uint uScriptId, Js::LocalFunctionId  functionId, Js::PropertyRecordList* boundPropertyRecords, FunctionInfo::Attributes attributes, FunctionBodyFlags flags
+        Utf8SourceInfo* sourceInfo, uint uFunctionNumber, uint uScriptId, Js::LocalFunctionId  functionId, FunctionInfo::Attributes attributes, FunctionBodyFlags flags
 #ifdef PERF_COUNTERS
             , bool isDeserializedFunction
 #endif
             )
     {
 #ifdef PERF_COUNTERS
-            return RecyclerNewWithBarrierFinalized(scriptContext->GetRecycler(), FunctionBody, scriptContext, displayName, displayNameLength, displayShortNameOffset, nestedCount, sourceInfo, uFunctionNumber, uScriptId, functionId, boundPropertyRecords, attributes, flags, isDeserializedFunction);
+            return RecyclerNewWithBarrierFinalized(scriptContext->GetRecycler(), FunctionBody, scriptContext, displayName, displayNameLength, displayShortNameOffset, nestedCount, sourceInfo, uFunctionNumber, uScriptId, functionId, attributes, flags, isDeserializedFunction);
 #else
-            return RecyclerNewWithBarrierFinalized(scriptContext->GetRecycler(), FunctionBody, scriptContext, displayName, displayNameLength, displayShortNameOffset, nestedCount, sourceInfo, uFunctionNumber, uScriptId, functionId, boundPropertyRecords, attributes, flags);
+            return RecyclerNewWithBarrierFinalized(scriptContext->GetRecycler(), FunctionBody, scriptContext, displayName, displayNameLength, displayShortNameOffset, nestedCount, sourceInfo, uFunctionNumber, uScriptId, functionId, attributes, flags);
 #endif
     }
 
     FunctionBody *
-    FunctionBody::NewFromParseableFunctionInfo(ParseableFunctionInfo * parseableFunctionInfo, PropertyRecordList * boundPropertyRecords)
+    FunctionBody::NewFromParseableFunctionInfo(ParseableFunctionInfo * parseableFunctionInfo)
     {
         ScriptContext * scriptContext = parseableFunctionInfo->GetScriptContext();
         uint nestedCount = parseableFunctionInfo->GetNestedCount();
@@ -464,10 +503,6 @@ namespace Js
         FunctionBody * functionBody = RecyclerNewWithBarrierFinalized(scriptContext->GetRecycler(),
             FunctionBody,
             parseableFunctionInfo);
-        if (!functionBody->GetBoundPropertyRecords())
-        {
-            functionBody->SetBoundPropertyRecords(boundPropertyRecords);
-        }
 
         // Initialize nested function array, update back pointers
         for (uint i = 0; i < nestedCount; i++)
@@ -481,12 +516,12 @@ namespace Js
 
     FunctionBody::FunctionBody(ScriptContext* scriptContext, const char16* displayName, uint displayNameLength, uint displayShortNameOffset, uint nestedCount,
         Utf8SourceInfo* utf8SourceInfo, uint uFunctionNumber, uint uScriptId,
-        Js::LocalFunctionId  functionId, Js::PropertyRecordList* boundPropertyRecords, FunctionInfo::Attributes attributes, FunctionBodyFlags flags
+        Js::LocalFunctionId  functionId, FunctionInfo::Attributes attributes, FunctionBodyFlags flags
 #ifdef PERF_COUNTERS
         , bool isDeserializedFunction
 #endif
         ) :
-        ParseableFunctionInfo(scriptContext->CurrentThunk, nestedCount, functionId, utf8SourceInfo, scriptContext, uFunctionNumber, displayName, displayNameLength, displayShortNameOffset, attributes, boundPropertyRecords, flags),
+        ParseableFunctionInfo(scriptContext->CurrentThunk, nestedCount, functionId, utf8SourceInfo, scriptContext, uFunctionNumber, displayName, displayNameLength, displayShortNameOffset, attributes, flags),
         counters(this),
         m_uScriptId(uScriptId),
         cleanedUp(false),
@@ -725,16 +760,9 @@ namespace Js
         SetCountField(CounterFields::ConstantCount, 1);
 
         proxy->UpdateFunctionBodyImpl(this);
-        this->SetDeferredStubs(proxy->GetDeferredStubs());
-
-        void* validationCookie = nullptr;
-
-#if ENABLE_NATIVE_CODEGEN
-        validationCookie = (void*)scriptContext->GetNativeCodeGenerator();
-#endif
 
         this->m_defaultEntryPointInfo = RecyclerNewFinalized(scriptContext->GetRecycler(),
-            FunctionEntryPointInfo, this, scriptContext->CurrentThunk, scriptContext->GetThreadContext(), validationCookie);
+            FunctionEntryPointInfo, this, scriptContext->CurrentThunk, scriptContext->GetThreadContext());
 
         this->SetDefaultFunctionEntryPointInfo((FunctionEntryPointInfo*) this->GetDefaultEntryPointInfo(), DefaultEntryThunk);
         this->m_hasBeenParsed = true;
@@ -807,6 +835,14 @@ namespace Js
             {
                 this->UpdateActiveFunctionsForOneDataSet(pActiveFuncs, callSiteData, callSiteData->GetLdFldInlinees(), this->GetInlineCacheCount());
             }
+            if (callSiteData->GetCallbackInlinees())
+            {
+                this->UpdateActiveFunctionsForOneDataSet(pActiveFuncs, callSiteData, callSiteData->GetCallbackInlinees(), this->GetProfiledCallSiteCount());
+            }
+            if (callSiteData->GetCallApplyTargetInlinees())
+            {
+                this->UpdateActiveFunctionsForOneDataSet(pActiveFuncs, callSiteData, callSiteData->GetCallApplyTargetInlinees(), this->GetProfiledCallApplyCallSiteCount());
+            }
         }
 
         // Now walk the top-level data, but only do it once, since it's always the same.
@@ -828,6 +864,22 @@ namespace Js
             {
                 this->UpdateActiveFunctionsForOneDataSet(pActiveFuncs, nullptr, data, this->GetInlineCacheCount());
             }
+        }
+        {
+            Field(FunctionCodeGenRuntimeData*)* data = this->GetCodeGenCallbackRuntimeData();
+            if (data != nullptr)
+            {
+                this->UpdateActiveFunctionsForOneDataSet(pActiveFuncs, nullptr, data, this->GetProfiledCallSiteCount());
+            }
+        }
+        {
+#if ENABLE_NATIVE_CODEGEN
+            Field(FunctionCodeGenRuntimeData*)* data = this->GetCodeGenCallApplyTargetRuntimeData();
+            if (data != nullptr)
+            {
+                this->UpdateActiveFunctionsForOneDataSet(pActiveFuncs, nullptr, data, this->GetProfiledCallApplyCallSiteCount());
+            }
+#endif
         }
     }
 
@@ -866,11 +918,12 @@ namespace Js
         }
 
         // Make sure the function won't be jitted
-        bool isJitModeFunction = !this->IsInterpreterExecutionMode();
         bool isJitCandidate = false;
+#if ENABLE_NATIVE_CODEGEN
+        bool isJitModeFunction = !this->IsInterpreterExecutionMode();
         isJitCandidate = MapEntryPointsUntil([=](int index, FunctionEntryPointInfo *entryPointInfo)
         {
-            if ((entryPointInfo->IsCodeGenPending() && isJitModeFunction) || entryPointInfo->IsCodeGenQueued() || entryPointInfo->IsCodeGenRecorded() || (entryPointInfo->IsCodeGenDone() && !entryPointInfo->nativeEntryPointProcessed))
+            if ((entryPointInfo->IsCodeGenPending() && isJitModeFunction) || entryPointInfo->IsCodeGenQueued() || entryPointInfo->IsCodeGenRecorded() || (entryPointInfo->IsCodeGenDone() && !entryPointInfo->IsNativeEntryPointProcessed()))
             {
                 return true;
             }
@@ -884,7 +937,7 @@ namespace Js
             {
                 return header->MapEntryPointsUntil([&](int index, LoopEntryPointInfo* entryPointInfo)
                 {
-                    if (entryPointInfo->IsCodeGenPending() || entryPointInfo->IsCodeGenQueued() || entryPointInfo->IsCodeGenRecorded() || (entryPointInfo->IsCodeGenDone() && !entryPointInfo->nativeEntryPointProcessed))
+                    if (entryPointInfo->IsCodeGenPending() || entryPointInfo->IsCodeGenQueued() || entryPointInfo->IsCodeGenRecorded() || (entryPointInfo->IsCodeGenDone() && !entryPointInfo->IsNativeEntryPointProcessed()))
                     {
                         return true;
                     }
@@ -892,6 +945,7 @@ namespace Js
                 });
             });
         }
+#endif
 
         return !isJitCandidate;
     }
@@ -979,7 +1033,7 @@ namespace Js
     Var
     FunctionBody::GetFormalsPropIdArrayOrNullObj()
     {
-        Var formalsPropIdArray = this->GetAuxPtrWithLock(AuxPointerType::FormalsPropIdArray);
+        Var formalsPropIdArray = this->GetAuxPtrWithLock<AuxPointerType::FormalsPropIdArray>();
         if (formalsPropIdArray == nullptr)
         {
             return GetScriptContext()->GetLibrary()->GetNull();
@@ -992,16 +1046,16 @@ namespace Js
     {
         if (checkForNull)
         {
-            Assert(this->GetAuxPtrWithLock(AuxPointerType::FormalsPropIdArray));
+            Assert(this->GetAuxPtrWithLock<AuxPointerType::FormalsPropIdArray>());
         }
-        return static_cast<PropertyIdArray*>(this->GetAuxPtrWithLock(AuxPointerType::FormalsPropIdArray));
+        return this->GetAuxPtrWithLock<AuxPointerType::FormalsPropIdArray>();
     }
 
     void
     FunctionBody::SetFormalsPropIdArray(PropertyIdArray * propIdArray)
     {
-        AssertMsg(propIdArray == nullptr || this->GetAuxPtrWithLock(AuxPointerType::FormalsPropIdArray) == nullptr, "Already set?");
-        this->SetAuxPtr(AuxPointerType::FormalsPropIdArray, propIdArray);
+        AssertMsg(propIdArray == nullptr || this->GetAuxPtrWithLock<AuxPointerType::FormalsPropIdArray>() == nullptr, "Already set?");
+        this->SetAuxPtr<AuxPointerType::FormalsPropIdArray>(propIdArray);
     }
 
     ByteBlock*
@@ -1024,9 +1078,30 @@ namespace Js
         }
     }
 
+    // Returns a raw pointer to the display name which may not have a well-known lifetime. It's safer to use
+    // GetExternalDisplayNameObject if the end goal is to create an object anyway.
     const char16* ParseableFunctionInfo::GetExternalDisplayName() const
     {
         return GetExternalDisplayName(this);
+    }
+
+    // Allocates a new JavascriptString object containing the display name associated with the FunctionBody.
+    JavascriptString* ParseableFunctionInfo::GetExternalDisplayNameObject(ScriptContext* scriptContext) const
+    {
+        const char16* name = GetExternalDisplayName();
+
+        if (!GetDisplayNameIsRecyclerAllocated() && !IsConstantFunctionName(name))
+        {
+            // The string is allocated in memory that we don't directly control the lifetime of. Copy the string to
+            // ensure that the buffer remains valid for the lifetime of the object.
+            return Js::JavascriptString::NewCopySz(name, scriptContext);
+        }
+        else
+        {
+            // Use the incoming buffer directly to create the object. This only works when the lifetime of the data is
+            // static or GC allocated.
+            return Js::JavascriptString::NewWithSz(name, scriptContext);
+        }
     }
 
     RegSlot
@@ -1140,7 +1215,7 @@ namespace Js
     FunctionBody::SetOutParamMaxDepth(RegSlot cOutParamsDepth)
     {
 #if _M_X64
-        const RegSlot minAsmJsOutParams = MinAsmJsOutParams();
+        constexpr RegSlot minAsmJsOutParams = MinAsmJsOutParams();
         if (GetIsAsmJsFunction() && cOutParamsDepth < minAsmJsOutParams)
         {
             cOutParamsDepth = minAsmJsOutParams;
@@ -1300,17 +1375,12 @@ namespace Js
         return entryPoint;
     }
 
+#if ENABLE_NATIVE_CODEGEN
     uint32 FunctionBody::GetFrameHeight(EntryPointInfo* entryPointInfo) const
     {
-        return entryPointInfo->frameHeight;
+        return entryPointInfo->GetNativeEntryPointData()->GetFrameHeight();
     }
 
-    void FunctionBody::SetFrameHeight(EntryPointInfo* entryPointInfo, uint32 frameHeight)
-    {
-        entryPointInfo->frameHeight = frameHeight;
-    }
-
-#if ENABLE_NATIVE_CODEGEN
     void
     FunctionBody::SetNativeThrowSpanSequence(SmallSpanSequence *seq, uint loopNum, LoopEntryPointInfo* entryPoint)
     {
@@ -1359,36 +1429,19 @@ namespace Js
     }
 #endif
 
-    bool
-    ParseableFunctionInfo::IsTrackedPropertyId(PropertyId pid)
-    {
-        Assert(this->GetBoundPropertyRecords() != nullptr);
-
-        PropertyRecordList* trackedProperties = this->GetBoundPropertyRecords();
-        const PropertyRecord* prop = nullptr;
-        if (trackedProperties->TryGetValue(pid, &prop))
-        {
-            Assert(prop != nullptr);
-
-            return true;
-        }
-
-        return this->m_scriptContext->IsTrackedPropertyId(pid);
-    }
-
     PropertyId
     ParseableFunctionInfo::GetOrAddPropertyIdTracked(JsUtil::CharacterBuffer<WCHAR> const& propName)
     {
-        Assert(this->GetBoundPropertyRecords() != nullptr);
-
         const Js::PropertyRecord* propRecord = nullptr;
+        ScriptContext * scriptContext = this->m_scriptContext;
+        scriptContext->GetOrAddPropertyRecord(propName, &propRecord);
 
-        this->m_scriptContext->GetOrAddPropertyRecord(propName, &propRecord);
-
-        PropertyId pid = propRecord->GetPropertyId();
-        this->GetBoundPropertyRecords()->Item(pid, propRecord);
-
-        return pid;
+        PropertyId propertyId = propRecord->GetPropertyId();
+        if (!scriptContext->IsTrackedPropertyId(propertyId))
+        {
+            this->m_utf8SourceInfo->GetBoundedPropertyRecordHashSet()->Item(propRecord);
+        }
+        return propertyId;
     }
 
     SmallSpanSequence::SmallSpanSequence()
@@ -1446,6 +1499,13 @@ namespace Js
         {
             other->SetIsJsBuiltInCode();
         }
+
+#define CopyDeferParseField(field) other->field = this->field;
+        CopyDeferParseField(deferredPrototypeType);
+        CopyDeferParseField(undeferredFunctionType);
+#undef CopyDeferParseField
+
+        other->SetFunctionObjectTypeList(this->GetFunctionObjectTypeList());
     }
 
     void ParseableFunctionInfo::Copy(ParseableFunctionInfo * other)
@@ -1454,6 +1514,8 @@ namespace Js
 
 #define CopyDeferParseField(field) other->field = this->field;
         CopyDeferParseField(flags);
+        CopyDeferParseField(crossSiteDeferredFunctionType);
+        CopyDeferParseField(crossSiteUndeferredFunctionType);
         CopyDeferParseField(m_isDeclaration);
         CopyDeferParseField(m_isAccessor);
         CopyDeferParseField(m_isStrictMode);
@@ -1468,6 +1530,8 @@ namespace Js
         CopyDeferParseField(m_inParamCount);
         CopyDeferParseField(m_grfscr);
         other->SetScopeInfo(this->GetScopeInfo());
+        other->SetDeferredStubs(this->GetDeferredStubs());
+        other->SetPrintOffsets(this->GetPrintOffsets());
         CopyDeferParseField(m_utf8SourceHasBeenSet);
 #if DBG
         CopyDeferParseField(deferredParseNextFunctionId);
@@ -1475,13 +1539,9 @@ namespace Js
 #endif
         CopyDeferParseField(scopeSlotArraySize);
         CopyDeferParseField(paramScopeSlotArraySize);
-        other->SetCachedSourceString(this->GetCachedSourceString());
+        other->SetCachedSourceStringWeakRef(this->GetCachedSourceStringWeakRef());
         CopyDeferParseField(m_isAsmjsMode);
         CopyDeferParseField(m_isAsmJsFunction);
-        CopyDeferParseField(deferredPrototypeType);
-        CopyDeferParseField(undeferredFunctionType);
-
-        other->SetFunctionObjectTypeList(this->GetFunctionObjectTypeList());
 
         PropertyId * propertyIds = this->GetPropertyIdsForScopeSlotArray();
         if (propertyIds != nullptr)
@@ -1568,8 +1628,10 @@ namespace Js
     // ParseableFunctionInfo methods
     ParseableFunctionInfo::ParseableFunctionInfo(JavascriptMethod entryPoint, int nestedCount,
         LocalFunctionId functionId, Utf8SourceInfo* sourceInfo, ScriptContext* scriptContext, uint functionNumber,
-        const char16* displayName, uint displayNameLength, uint displayShortNameOffset, FunctionInfo::Attributes attributes, Js::PropertyRecordList* propertyRecords, FunctionBodyFlags flags) :
+        const char16* displayName, uint displayNameLength, uint displayShortNameOffset, FunctionInfo::Attributes attributes, FunctionBodyFlags flags) :
       FunctionProxy(scriptContext, sourceInfo, functionNumber),
+      crossSiteDeferredFunctionType(nullptr),
+      crossSiteUndeferredFunctionType(nullptr),
 #if DYNAMIC_INTERPRETER_THUNK
       m_dynamicInterpreterThunk(nullptr),
 #endif
@@ -1610,8 +1672,8 @@ namespace Js
       m_tag21(true),
       m_isMethod(false)
 #if DBG
-        ,m_wasEverAsmjsMode(false)
-        ,scopeObjectSize(0)
+      ,m_wasEverAsmjsMode(false)
+      ,scopeObjectSize(0)
 #endif
     {
         this->functionInfo = RecyclerNew(scriptContext->GetRecycler(), FunctionInfo, entryPoint, attributes, functionId, this);
@@ -1626,17 +1688,10 @@ namespace Js
             nestedArray = nullptr;
         }
 
-        SetBoundPropertyRecords(propertyRecords);
         if ((attributes & Js::FunctionInfo::DeferredParse) == 0)
         {
-            void* validationCookie = nullptr;
-
-#if ENABLE_NATIVE_CODEGEN
-            validationCookie = (void*)scriptContext->GetNativeCodeGenerator();
-#endif
-
             this->m_defaultEntryPointInfo = RecyclerNewFinalized(scriptContext->GetRecycler(),
-                FunctionEntryPointInfo, this, entryPoint, scriptContext->GetThreadContext(), validationCookie);
+                FunctionEntryPointInfo, this, entryPoint, scriptContext->GetThreadContext());
         }
         else
         {
@@ -1680,12 +1735,11 @@ namespace Js
 
         proxy->Copy(this);
 
-        SetBoundPropertyRecords(proxy->GetBoundPropertyRecords());
         SetDisplayName(proxy->GetDisplayName(), proxy->GetDisplayNameLength(), proxy->GetShortDisplayNameOffset());
     }
 
     ParseableFunctionInfo* ParseableFunctionInfo::New(ScriptContext* scriptContext, int nestedCount,
-        LocalFunctionId functionId, Utf8SourceInfo* sourceInfo, const char16* displayName, uint displayNameLength, uint displayShortNameOffset, Js::PropertyRecordList* propertyRecords, FunctionInfo::Attributes attributes, FunctionBodyFlags flags)
+        LocalFunctionId functionId, Utf8SourceInfo* sourceInfo, const char16* displayName, uint displayNameLength, uint displayShortNameOffset, FunctionInfo::Attributes attributes, FunctionBodyFlags flags)
     {
 #if defined(ENABLE_SCRIPT_PROFILING) || defined(ENABLE_SCRIPT_DEBUGGING)
         Assert(
@@ -1721,7 +1775,6 @@ namespace Js
             displayNameLength,
             displayShortNameOffset,
             (FunctionInfo::Attributes)(attributes | FunctionInfo::Attributes::DeferredParse),
-            propertyRecords,
             flags);
     }
 
@@ -1912,13 +1965,45 @@ namespace Js
         return this->m_displayName;
     }
 
-    void ParseableFunctionInfo::BuildDeferredStubs(ParseNode *pnodeFnc)
+    void ParseableFunctionInfo::BuildDeferredStubs(ParseNodeFnc *pnodeFnc)
     {
-        Assert(pnodeFnc->nop == knopFncDecl);
+        DeferredFunctionStub* deferredStubs = Parser::BuildDeferredStubTree(pnodeFnc, m_scriptContext->GetRecycler());
+        this->SetDeferredStubs(deferredStubs);
+    }
 
-        // TODO: Disabling the creation of deferred stubs for now. We need to rethink the design again as the current behavior
-        // is not usable with precise capturing.
-        this->SetDeferredStubs(nullptr);
+    JavascriptString * ParseableFunctionInfo::GetCachedSourceString()
+    {
+        RecyclerWeakReference<JavascriptString> * weakRef = GetCachedSourceStringWeakRef();
+        if (weakRef)
+        {
+            JavascriptString * string = weakRef->Get();
+            if (string)
+            {
+                return string;
+            }
+            this->SetAuxPtr<AuxPointerType::CachedSourceString>(nullptr);
+        }
+        return nullptr;
+    }
+
+    void ParseableFunctionInfo::SetCachedSourceString(JavascriptString * sourceString)
+    {
+        Assert(this->GetCachedSourceString() == nullptr);
+        if (sourceString)
+        {
+            this->SetCachedSourceStringWeakRef(this->GetRecycler()->CreateWeakReferenceHandle(sourceString));
+        }
+    }
+
+    RecyclerWeakReference<JavascriptString> * ParseableFunctionInfo::GetCachedSourceStringWeakRef()
+    {
+        return this->GetAuxPtr<AuxPointerType::CachedSourceString>();
+    }
+
+    void ParseableFunctionInfo::SetCachedSourceStringWeakRef(RecyclerWeakReference<JavascriptString> * weakRef)
+    {
+        Assert(this->GetCachedSourceString() == nullptr);
+        this->SetAuxPtr<AuxPointerType::CachedSourceString>(weakRef);
     }
 
     FunctionInfoArray ParseableFunctionInfo::GetNestedFuncArray()
@@ -2033,6 +2118,28 @@ namespace Js
         undeferredFunctionType = type;
     }
 
+    ScriptFunctionType * FunctionProxy::GetCrossSiteDeferredFunctionType() const
+    {
+        return HasParseableInfo() ? GetParseableFunctionInfo()->GetCrossSiteDeferredFunctionType() : nullptr;
+    }
+
+    void FunctionProxy::SetCrossSiteDeferredFunctionType(ScriptFunctionType * type)
+    {
+        Assert(HasParseableInfo());
+        GetParseableFunctionInfo()->SetCrossSiteDeferredFunctionType(type);
+    }
+
+    ScriptFunctionType * FunctionProxy::GetCrossSiteUndeferredFunctionType() const
+    {
+        return HasParseableInfo() ? GetParseableFunctionInfo()->GetCrossSiteUndeferredFunctionType() : nullptr;
+    }
+
+    void FunctionProxy::SetCrossSiteUndeferredFunctionType(ScriptFunctionType * type)
+    {
+        Assert(HasParseableInfo());
+        GetParseableFunctionInfo()->SetCrossSiteUndeferredFunctionType(type);
+    }
+
     JavascriptMethod FunctionProxy::GetDirectEntryPoint(ProxyEntryPointInfo* entryPoint) const
     {
         Assert(entryPoint->jsMethod != nullptr);
@@ -2042,39 +2149,12 @@ namespace Js
     // Function object type list methods
     FunctionProxy::FunctionTypeWeakRefList* FunctionProxy::GetFunctionObjectTypeList() const
     {
-        return static_cast<FunctionTypeWeakRefList*>(this->GetAuxPtr(AuxPointerType::FunctionObjectTypeList));
+        return this->GetAuxPtr<AuxPointerType::FunctionObjectTypeList>();
     }
 
     void FunctionProxy::SetFunctionObjectTypeList(FunctionProxy::FunctionTypeWeakRefList* list)
     {
-        this->SetAuxPtr(AuxPointerType::FunctionObjectTypeList, list);
-    }
-
-    template <typename Fn>
-    void FunctionProxy::MapFunctionObjectTypes(Fn func)
-    {
-        FunctionTypeWeakRefList* functionObjectTypeList = this->GetFunctionObjectTypeList();
-        if (functionObjectTypeList != nullptr)
-        {
-            functionObjectTypeList->Map([&](int, FunctionTypeWeakRef* typeWeakRef)
-            {
-                if (typeWeakRef)
-                {
-                    ScriptFunctionType* type = typeWeakRef->Get();
-                    if (type)
-                    {
-                        func(type);
-                    }
-                }
-            });
-        }
-
-        if (this->deferredPrototypeType)
-        {
-            func(this->deferredPrototypeType);
-        }
-        // NOTE: We deliberately do not map the undeferredFunctionType here, since it's in the list
-        // of registered function object types we processed above.
+        this->SetAuxPtr<AuxPointerType::FunctionObjectTypeList>(list);
     }
 
     FunctionProxy::FunctionTypeWeakRefList* FunctionProxy::EnsureFunctionObjectTypeList()
@@ -2094,7 +2174,7 @@ namespace Js
     {
         FunctionTypeWeakRefList* typeList = EnsureFunctionObjectTypeList();
 
-        Assert(functionType != deferredPrototypeType);
+        Assert(functionType != deferredPrototypeType && functionType != undeferredFunctionType);
         Recycler * recycler = this->GetScriptContext()->GetRecycler();
         FunctionTypeWeakRef* weakRef = recycler->CreateWeakReferenceHandle(functionType);
         typeList->SetAtFirstFreeSpot(weakRef);
@@ -2217,9 +2297,6 @@ namespace Js
         bool asmjsParseFailed = false;
         BOOL fParsed = FALSE;
         FunctionBody* returnFunctionBody = nullptr;
-        ENTER_PINNED_SCOPE(Js::PropertyRecordList, propertyRecordList);
-        Recycler* recycler = this->m_scriptContext->GetRecycler();
-        propertyRecordList = RecyclerNew(recycler, Js::PropertyRecordList, recycler);
 
         bool isDebugOrAsmJsReparse = false;
         FunctionBody* funcBody = nullptr;
@@ -2236,7 +2313,7 @@ namespace Js
             if (!this->m_hasBeenParsed)
             {
                 this->GetUtf8SourceInfo()->StopTrackingDeferredFunction(this->GetLocalFunctionId());
-                funcBody = FunctionBody::NewFromParseableFunctionInfo(this, propertyRecordList);
+                funcBody = FunctionBody::NewFromParseableFunctionInfo(this);
                 autoRestoreFunctionInfo.funcBody = funcBody;
 
                 PERF_COUNTER_DEC(Code, DeferredFunction);
@@ -2330,7 +2407,6 @@ namespace Js
                 Assert(!funcBody->HasExecutionDynamicProfileInfo());
 #endif
                 // In debug or asm.js mode, the scriptlet will be asked to recompile again.
-                AssertMsg(isDebugOrAsmJsReparse || funcBody->GetGrfscr() & fscrGlobalCode || CONFIG_FLAG(DeferNested), "Deferred parsing of non-global procedure?");
 
                 HRESULT hr = NO_ERROR;
                 HRESULT hrParser = NO_ERROR;
@@ -2370,14 +2446,57 @@ namespace Js
                         grfscr &= ~fscrDeferredFncIsMethod;
                     }
 
-                    if (!CONFIG_FLAG(DeferNested) || isDebugOrAsmJsReparse)
+                    if (funcBody->IsAsync())
                     {
-                        grfscr &= ~fscrDeferFncParse; // Disable deferred parsing if not DeferNested, or doing a debug/asm.js re-parse
+                        grfscr |= fscrDeferredFncIsAsync;
+                    }
+                    else
+                    {
+                        grfscr &= ~fscrDeferredFncIsAsync;
+                    }
+
+                    if (funcBody->IsGenerator())
+                    {
+                        grfscr |= fscrDeferredFncIsGenerator;
+                    }
+                    else
+                    {
+                        grfscr &= ~fscrDeferredFncIsGenerator;
+                    }
+
+                    if (funcBody->IsClassConstructor())
+                    {
+                        grfscr |= fscrDeferredFncIsClassConstructor;
+                    }
+                    else
+                    {
+                        grfscr &= ~fscrDeferredFncIsClassConstructor;
+                    }
+
+                    if (funcBody->IsBaseClassConstructor())
+                    {
+                        grfscr |= fscrDeferredFncIsBaseClassConstructor;
+                    }
+                    else
+                    {
+                        grfscr &= ~fscrDeferredFncIsBaseClassConstructor;
+                    }
+
+                    if (funcBody->IsClassMethod())
+                    {
+                        grfscr |= fscrDeferredFncIsClassMember;
+                    }
+                    else
+                    {
+                        grfscr &= ~fscrDeferredFncIsClassMember;
                     }
 
                     if (isDebugOrAsmJsReparse)
                     {
-                        grfscr |= fscrNoAsmJs; // Disable asm.js when debugging or if linking failed
+                        // Disable deferred parsing if not DeferNested, or doing a debug/asm.js re-parse
+                        // Disable asm.js when debugging or if linking failed
+                        // Disable parser state cache if we're debugging or reparsing asm.js
+                        grfscr = fscrNoAsmJs | (grfscr & ~(fscrWillDeferFncParse | fscrCreateParserState));
                     }
 
                     BEGIN_TRANSLATE_EXCEPTION_TO_HRESULT
@@ -2478,8 +2597,6 @@ namespace Js
             returnFunctionBody = this->GetFunctionBody();
         }
 
-        LEAVE_PINNED_SCOPE();
-
         if (asmjsParseFailed)
         {
             // disable asm.js and reparse on failure
@@ -2497,10 +2614,6 @@ namespace Js
         Assert(m_isAsmjsMode);
 
         FunctionBody* returnFunctionBody = nullptr;
-        ENTER_PINNED_SCOPE(Js::PropertyRecordList, propertyRecordList);
-        Recycler* recycler = this->m_scriptContext->GetRecycler();
-        propertyRecordList = RecyclerNew(recycler, Js::PropertyRecordList, recycler);
-
         FunctionBody* funcBody = nullptr;
 
         funcBody = FunctionBody::NewFromRecycler(
@@ -2513,7 +2626,6 @@ namespace Js
             this->m_functionNumber,
             this->GetUtf8SourceInfo()->GetSrcInfo()->sourceContextInfo->sourceContextId,
             this->GetLocalFunctionId(),
-            propertyRecordList,
             (FunctionInfo::Attributes)(this->GetAttributes() & ~(FunctionInfo::Attributes::DeferredDeserialize | FunctionInfo::Attributes::DeferredParse)),
             Js::FunctionBody::FunctionBodyFlags::Flags_HasNoExplicitReturnValue
 #ifdef PERF_COUNTERS
@@ -2587,8 +2699,6 @@ namespace Js
         Assert(funcBody->GetFunctionBody() == funcBody);
 
         returnFunctionBody = funcBody;
-
-        LEAVE_PINNED_SCOPE();
 
         return returnFunctionBody;
     }
@@ -2681,6 +2791,7 @@ namespace Js
         if (srcName == Js::Constants::GlobalFunction ||
             srcName == Js::Constants::AnonymousFunction ||
             srcName == Js::Constants::GlobalCode ||
+            srcName == Js::Constants::ModuleCode ||
             srcName == Js::Constants::Anonymous ||
             srcName == Js::Constants::UnknownScriptCode ||
             srcName == Js::Constants::FunctionCode)
@@ -2813,8 +2924,17 @@ namespace Js
             {
                 Js::Throw::OutOfMemory();
             }
+            Assert(node->cbStringMin <= node->cbMin);
             this->m_cbStartOffset = (uint)cbMin;
             this->m_cbLength = (uint)lengthInBytes;
+
+            if (node->cbStringMin != node->cbMin)
+            {
+                PrintOffsets* printOffsets = RecyclerNewLeaf(this->m_scriptContext->GetRecycler(), PrintOffsets);
+                printOffsets->cbStartPrintOffset = (uint)node->cbStringMin;
+                printOffsets->cbEndPrintOffset = (uint)node->cbStringLim;
+                this->SetPrintOffsets(printOffsets);
+            }
 
             Assert(this->m_utf8SourceInfo != nullptr);
             this->m_utf8SourceHasBeenSet = true;
@@ -3482,8 +3602,29 @@ namespace Js
 
     bool FunctionBody::IsSimpleJitOriginalEntryPoint() const
     {
+#if ENABLE_NATIVE_CODEGEN
         const FunctionEntryPointInfo *const simpleJitEntryPointInfo = GetSimpleJitEntryPointInfo();
         return simpleJitEntryPointInfo && simpleJitEntryPointInfo->GetNativeEntrypoint() == GetOriginalEntryPoint_Unchecked();
+#else
+        return false;
+#endif
+    }
+
+    void FunctionBody::UpdateEntryPointsOnDebugReparse()
+    {
+        // Update all function types associated with this function body. Note that we can't rely on updating
+        // types pointed to by function objects, because the type may evolve to one that is not currently referenced.
+
+        ProxyEntryPointInfo * entryPointInfo = this->GetDefaultFunctionEntryPointInfo();
+        JavascriptMethod newEntryPoint = this->GetDirectEntryPoint(entryPointInfo);
+        bool isAsmJS = this->GetIsAsmjsMode();
+
+        auto updateOneType = [&](ScriptFunctionType* functionType) {
+            // Note that the ScriptFunctionType method will handle cross-site thunks correctly.
+            functionType->ChangeEntryPoint(entryPointInfo, newEntryPoint, isAsmJS);
+        };
+
+        this->MapFunctionObjectTypes(updateOneType);
     }
 
     void FunctionProxy::Finalize(bool isShutdown)
@@ -3533,23 +3674,33 @@ namespace Js
         JavascriptMethod directEntryPoint = this->GetDefaultEntryPointInfo()->jsMethod;
         JavascriptMethod originalEntryPoint = this->GetOriginalEntryPoint_Unchecked();
 
+        FunctionBody* body = this->GetFunctionBody();
+        Unused(body); // in some configuration
+#ifdef ASMJS_PLAT
+        if (body->GetIsAsmJsFunction())
+        {
+#ifdef ENABLE_WASM
+            if (body->IsWasmFunction() && body->GetByteCodeCount() == 0)
+            {
+                // The only valid 2 entrypoints if the function hasn't been parsed
+                return directEntryPoint == AsmJsDefaultEntryThunk || directEntryPoint == WasmLibrary::WasmLazyTrapCallback;
+            }
+#endif
+            // Entrypoints valid only for asm.js/wasm
+            if (directEntryPoint == AsmJsDefaultEntryThunk || IsAsmJsCodeGenThunk(directEntryPoint))
+            {
+                return true;
+            }
+        }
+#endif
         // Check the direct entry point to see if it is codegen thunk
         // if it is not, the background codegen thread has updated both original entry point and direct entry point
         // and they should still match, same as cases other then code gen
         return IsIntermediateCodeGenThunk(directEntryPoint) || originalEntryPoint == directEntryPoint
 #if ENABLE_PROFILE_INFO
-            || (directEntryPoint == DynamicProfileInfo::EnsureDynamicProfileInfoThunk &&
-            this->IsFunctionBody() && this->GetFunctionBody()->IsNativeOriginalEntryPoint())
-#ifdef ENABLE_WASM
-            || (GetFunctionBody()->IsWasmFunction() &&
-                (directEntryPoint == WasmLibrary::WasmDeferredParseInternalThunk || directEntryPoint == WasmLibrary::WasmLazyTrapCallback))
+            || (directEntryPoint == DynamicProfileInfo::EnsureDynamicProfileInfoThunk && body->IsNativeOriginalEntryPoint())
 #endif
-#ifdef ASMJS_PLAT
-            || (GetFunctionBody()->GetIsAsmJsFunction() && directEntryPoint == AsmJsDefaultEntryThunk)
-            || IsAsmJsCodeGenThunk(directEntryPoint)
-#endif
-#endif
-        ;
+            ;
     }
 #if defined(ENABLE_SCRIPT_PROFILING) || defined(ENABLE_SCRIPT_DEBUGGING)
     bool FunctionProxy::HasValidProfileEntryPoint() const
@@ -3646,6 +3797,7 @@ namespace Js
         this->SetOriginalEntryPoint(DefaultEntryThunk);
     }
 
+#if ENABLE_NATIVE_CODEGEN
     void FunctionBody::SetCheckCodeGenEntryPoint(FunctionEntryPointInfo* entryPointInfo, JavascriptMethod entryPoint)
     {
         Assert(IsIntermediateCodeGenThunk(entryPoint));
@@ -3658,10 +3810,13 @@ namespace Js
             ));
         this->SetEntryPoint(entryPointInfo, entryPoint);
     }
+#endif
 
 #if DYNAMIC_INTERPRETER_THUNK
     void FunctionBody::GenerateDynamicInterpreterThunk()
     {
+        AssertOrFailFastMsg(!m_isWasmFunction || GetByteCodeCount() > 0, "The wasm function should have been parsed before generating the dynamic interpreter thunk");
+
         if (this->m_dynamicInterpreterThunk == nullptr)
         {
             // NOTE: Etw rundown thread may be reading this->dynamicInterpreterThunk concurrently. We don't need to synchronize
@@ -3695,10 +3850,12 @@ namespace Js
                 Assert(this->GetOriginalEntryPoint_Unchecked() == (JavascriptMethod)&Js::InterpreterStackFrame::StaticInterpreterAsmThunk);
             }
             else
-#endif
             {
                 Assert(this->GetOriginalEntryPoint_Unchecked() == (JavascriptMethod)&Js::InterpreterStackFrame::StaticInterpreterThunk);
             }
+#else
+            Assert(this->GetOriginalEntryPoint_Unchecked() == (JavascriptMethod)&Js::InterpreterStackFrame::StaticInterpreterThunk);
+#endif
         }
 #endif
     }
@@ -3713,6 +3870,7 @@ namespace Js
         this->EnsureDynamicProfileInfo();
 
         Assert(HasValidEntryPoint());
+        AssertMsg(!m_isWasmFunction || GetByteCodeCount() > 0, "Wasm function should be parsed by this point");
         if (InterpreterStackFrame::IsDelayDynamicInterpreterThunk(this->GetEntryPoint(entryPointInfo)))
         {
             // We are not doing code gen on this function, just change the entry point directly
@@ -3758,7 +3916,7 @@ namespace Js
 #if ENABLE_NATIVE_CODEGEN
     void FunctionBody::SetNativeEntryPoint(FunctionEntryPointInfo* entryPointInfo, JavascriptMethod originalEntryPoint, JavascriptMethod directEntryPoint)
     {
-        if(entryPointInfo->nativeEntryPointProcessed)
+        if (entryPointInfo->IsNativeEntryPointProcessed())
         {
             return;
         }
@@ -3812,7 +3970,7 @@ namespace Js
         _InstructionSynchronizationBarrier();
 #endif
 
-        entryPointInfo->nativeEntryPointProcessed = true;
+        entryPointInfo->SetNativeEntryPointProcessed();
     }
 
     void FunctionBody::DefaultSetNativeEntryPoint(FunctionEntryPointInfo* entryPointInfo, FunctionBody * functionBody, JavascriptMethod entryPoint)
@@ -4027,7 +4185,7 @@ namespace Js
 //        Assert(CanDoStackNestedFunc());
         Assert(parentFunctionBody->DoStackNestedFunc());
 
-        this->SetAuxPtr(AuxPointerType::StackNestedFuncParent, this->GetScriptContext()->GetRecycler()->CreateWeakReferenceHandle(parentFunctionInfo));
+        this->SetAuxPtr<AuxPointerType::StackNestedFuncParent>(this->GetScriptContext()->GetRecycler()->CreateWeakReferenceHandle(parentFunctionInfo));
     }
 
     FunctionInfo * FunctionBody::GetStackNestedFuncParentStrongRef()
@@ -4038,12 +4196,12 @@ namespace Js
 
     RecyclerWeakReference<FunctionInfo> * FunctionBody::GetStackNestedFuncParent()
     {
-        return static_cast<RecyclerWeakReference<FunctionInfo>*>(this->GetAuxPtr(AuxPointerType::StackNestedFuncParent));
+        return this->GetAuxPtr<AuxPointerType::StackNestedFuncParent>();
     }
 
     FunctionInfo * FunctionBody::GetAndClearStackNestedFuncParent()
     {
-        if (this->GetAuxPtr(AuxPointerType::StackNestedFuncParent))
+        if (this->GetAuxPtr<AuxPointerType::StackNestedFuncParent>())
         {
             FunctionInfo * parentFunctionInfo = GetStackNestedFuncParentStrongRef();
             ClearStackNestedFuncParent();
@@ -4054,7 +4212,7 @@ namespace Js
 
     void FunctionBody::ClearStackNestedFuncParent()
     {
-        this->SetAuxPtr(AuxPointerType::StackNestedFuncParent, nullptr);
+        this->SetAuxPtr<AuxPointerType::StackNestedFuncParent>(nullptr);
     }
 
     void FunctionBody::CreateCacheIdToPropertyIdMap(uint rootObjectLoadInlineCacheStart, uint rootObjectLoadMethodInlineCacheStart,
@@ -4282,6 +4440,13 @@ namespace Js
         this->RecordConstant(location, str);
     }
 
+    void FunctionBody::RecordBigIntConstant(RegSlot location, LPCOLESTR psz, uint32 cch, bool isNegative)
+    {
+        ScriptContext *scriptContext = this->GetScriptContext();
+        Var bigintConst = JavascriptBigInt::Create(psz, cch, isNegative, scriptContext);
+        this->RecordConstant(location, bigintConst);
+    }
+
     void FunctionBody::RecordFloatConstant(RegSlot location, double d)
     {
         ScriptContext *scriptContext = this->GetScriptContext();
@@ -4344,23 +4509,27 @@ namespace Js
     void EntryPointInfo::DumpNativeOffsetMaps()
     {
         // Native Offsets
-        if (this->nativeOffsetMaps.Count() > 0)
+        if (this->HasNativeEntryPointData())
         {
-            Output::Print(_u("Native Map: baseAddr: 0x%0Ix, size: 0x%0Ix\nstatementId, offset range, address range\n"),
-                          this->GetNativeAddress(),
-                          this->GetCodeSize());
-
-
-            int count = this->nativeOffsetMaps.Count();
-            for(int i = 0; i < count; i++)
+            auto& nativeOffsetMaps = this->GetNativeEntryPointData()->GetNativeOffsetMaps();
+            if (nativeOffsetMaps.Count() > 0)
             {
-                const NativeOffsetMap* map = &this->nativeOffsetMaps.Item(i);
+                Output::Print(_u("Native Map: baseAddr: 0x%0Ix, size: 0x%0Ix\nstatementId, offset range, address range\n"),
+                    this->GetNativeAddress(),
+                    this->GetCodeSize());
 
-                Output::Print(_u("S%4d, (%5d, %5d)  (0x%012Ix, 0x%012Ix)\n"), map->statementIndex,
-                                                      map->nativeOffsetSpan.begin,
-                                                      map->nativeOffsetSpan.end,
-                                                      map->nativeOffsetSpan.begin + this->GetNativeAddress(),
-                                                      map->nativeOffsetSpan.end + this->GetNativeAddress());
+
+                int count = nativeOffsetMaps.Count();
+                for (int i = 0; i < count; i++)
+                {
+                    const NativeEntryPointData::NativeOffsetMap* map = &nativeOffsetMaps.Item(i);
+
+                    Output::Print(_u("S%4d, (%5d, %5d)  (0x%012Ix, 0x%012Ix)\n"), map->statementIndex,
+                        map->nativeOffsetSpan.begin,
+                        map->nativeOffsetSpan.end,
+                        map->nativeOffsetSpan.begin + this->GetNativeAddress(),
+                        map->nativeOffsetSpan.end + this->GetNativeAddress());
+                }
             }
         }
     }
@@ -4392,18 +4561,19 @@ namespace Js
     void EntryPointInfo::DumpNativeThrowSpanSequence()
     {
         // Native Throw Map
-        if (this->nativeThrowSpanSequence)
+        SmallSpanSequence * nativeThrowSpanSequence = this->GetNativeEntryPointData()->GetNativeThrowSpanSequence();
+        if (nativeThrowSpanSequence)
         {
             Output::Print(_u("Native Throw Map: baseAddr: 0x%0Ix, size: 0x%Ix\nstatementId, offset range, address range\n"),
                           this->GetNativeAddress(),
                           this->GetCodeSize());
 
-            int count = this->nativeThrowSpanSequence->Count();
+            int count = nativeThrowSpanSequence->Count();
             SmallSpanSequenceIter iter;
             for (int i = 0; i < count; i++)
             {
                 StatementData data;
-                if (this->nativeThrowSpanSequence->Item(i, iter, data))
+                if (nativeThrowSpanSequence->Item(i, iter, data))
                 {
                     Output::Print(_u("S%4d, (%5d -----)  (0x%012Ix --------)\n"), data.sourceBegin, // statementIndex
                         data.bytecodeBegin, // nativeOffset
@@ -4416,7 +4586,7 @@ namespace Js
 
     void FunctionBody::PrintStatementSourceLine(uint statementIndex)
     {
-        if (m_isWasmFunction)
+        if (m_isWasmFunction || this->GetUtf8SourceInfo()->GetIsLibraryCode())
         {
             // currently no source view support for wasm
             return;
@@ -4465,13 +4635,16 @@ namespace Js
             }
             Output::Print(_u("\n\n  Line %3d: "), line + 1);
             // Need to match up cchStartOffset to appropriate cbStartOffset given function's cbStartOffset and cchStartOffset
-            size_t i = utf8::CharacterIndexToByteIndex(source, sourceInfo->GetCbLength(), cchStartOffset, this->m_cbStartOffset, this->m_cchStartOffset);
-
-            size_t lastOffset = StartOffset() + LengthInBytes();
-            for (;i < lastOffset && source[i] != '\n' && source[i] != '\r'; i++)
+            size_t utf8SrcStartIdx = utf8::CharacterIndexToByteIndex(source, sourceInfo->GetCbLength(), cchStartOffset, this->m_cbStartOffset, this->m_cchStartOffset);
+            size_t utf8SrcEndIdx = StartOffset() + LengthInBytes();
+            char16* utf16Buf = HeapNewArray(char16, utf8SrcEndIdx - utf8SrcStartIdx + 2); 
+            size_t utf16BufSz = utf8::DecodeUnitsIntoAndNullTerminateNoAdvance(utf16Buf, source + utf8SrcStartIdx, source + utf8SrcEndIdx, utf8::DecodeOptions::doDefault);
+            Assert(utf16BufSz <= utf8SrcEndIdx - utf8SrcStartIdx);
+            for (size_t i = 0; i < utf16BufSz && utf16Buf[i] != _u('\n') && utf16Buf[i] != _u('\r'); i++)
             {
-                Output::Print(_u("%C"), source[i]);
+                Output::Print(_u("%lc"), utf16Buf[i]);
             }
+            HeapDeleteArray(utf8SrcEndIdx - utf8SrcStartIdx + 2, utf16Buf);
             Output::Print(_u("\n"));
             Output::Print(_u("  Col %4d:%s^\n"), col + 1, ((col+1)<10000) ? _u(" ") : _u(""));
 
@@ -4632,16 +4805,18 @@ namespace Js
     }
 #endif /* IR_VIEWER */
 
+#if ENABLE_NATIVE_CODEGEN
 #ifdef VTUNE_PROFILING
 #include "jitprofiling.h"
 
     int EntryPointInfo::GetNativeOffsetMapCount() const
     {
-        return this->nativeOffsetMaps.Count();
+        return this->GetNativeEntryPointData()->GetNativeOffsetMaps().Count();
     }
 
     uint EntryPointInfo::PopulateLineInfo(void* pInfo, FunctionBody* body)
     {
+        auto& nativeOffsetMaps = this->GetNativeEntryPointData()->GetNativeOffsetMaps();
         LineNumberInfo* pLineInfo = (LineNumberInfo*)pInfo;
         ULONG functionLineNumber = body->GetLineNumber();
         pLineInfo[0].Offset = 0;
@@ -4649,10 +4824,10 @@ namespace Js
 
         int lineNumber = 0;
         int j = 1; // start with 1 since offset 0 has already been populated with function line number
-        int count = this->nativeOffsetMaps.Count();
+        int count = nativeOffsetMaps.Count();
         for(int i = 0; i < count; i++)
         {
-            const NativeOffsetMap* map = &this->nativeOffsetMaps.Item(i);
+            const NativeEntryPointData::NativeOffsetMap* map = &nativeOffsetMaps.Item(i);
             uint32 statementIndex = map->statementIndex;
             if (statementIndex == 0)
             {
@@ -4713,6 +4888,7 @@ namespace Js
 
         return startOffset;
     }
+#endif
 #endif
 
     void ParseableFunctionInfo::SetIsNonUserCode(bool set)
@@ -4896,6 +5072,14 @@ namespace Js
             this->undeferredFunctionType->SetEntryPoint(this->GetDefaultEntryPointInfo()->jsMethod);
             this->undeferredFunctionType->SetEntryPointInfo(this->GetDefaultEntryPointInfo());
         }
+        if (this->crossSiteDeferredFunctionType)
+        {
+            this->crossSiteDeferredFunctionType->SetEntryPointInfo(this->GetDefaultEntryPointInfo());
+        }
+        if (this->crossSiteUndeferredFunctionType)
+        {
+            this->crossSiteUndeferredFunctionType->SetEntryPointInfo(this->GetDefaultEntryPointInfo());
+        }
 
 #if DBG
         if (!this->HasValidEntryPoint())
@@ -4971,6 +5155,9 @@ namespace Js
         this->cacheIdToPropertyIdMap = nullptr;
         this->SetFormalsPropIdArray(nullptr);
         this->SetReferencedPropertyIdMap(nullptr);
+#if ENABLE_NATIVE_CODEGEN
+        this->SetCallSiteToCallApplyCallSiteArray(nullptr);
+#endif
         this->SetLiteralRegexs(nullptr);
         this->SetSlotIdInCachedScopeToNestedIndexArray(nullptr);
         this->SetStatementMaps(nullptr);
@@ -5017,7 +5204,7 @@ namespace Js
                 NEXT_SLISTBASE_ENTRY_EDITING;
             }
 #endif
-            this->dynamicProfileInfo = nullptr;
+        this->dynamicProfileInfo = nullptr;
         }
 #endif
         this->hasExecutionDynamicProfileInfo = false;
@@ -5131,23 +5318,19 @@ namespace Js
             }
 
             this->SetOriginalEntryPoint(DefaultDeferredParsingThunk);
-
-            // Abandon the shared type so a new function will get a new one
-            this->deferredPrototypeType = nullptr;
-            this->undeferredFunctionType = nullptr;
             this->SetAttributes((FunctionInfo::Attributes) (this->GetAttributes() | FunctionInfo::Attributes::DeferredParse));
         }
 
         // Set other state back to before parse as well
         this->SetStackNestedFunc(false);
-        this->SetAuxPtr(AuxPointerType::StackNestedFuncParent, nullptr);
+        this->SetAuxPtr<AuxPointerType::StackNestedFuncParent>(nullptr);
         this->SetReparsed(true);
 #if DBG
         char16 debugStringBuffer[MAX_FUNCTION_BODY_DEBUG_STRING_SIZE];
         OUTPUT_VERBOSE_TRACE(Js::DebuggerPhase, _u("Regenerate Due To Debug Mode: function %s (%s) from script context %p\n"),
             this->GetDisplayName(), this->GetDebugNumberSet(debugStringBuffer), m_scriptContext);
 
-        this->UnlockCounters(); // asuming background jit is stopped and allow the counter setters access again
+        this->UnlockCounters(); // assuming background jit is stopped and allow the counter setters access again
 #endif
     }
 #endif
@@ -5191,7 +5374,7 @@ namespace Js
         if (this->deferredPrototypeType)
         {
             // Update old entry points on the deferred prototype type,
-            // as they may point to old native code gen regions which age gone now.
+            // as they may point to old native code gen regions which are gone now.
             this->deferredPrototypeType->SetEntryPoint(this->GetDefaultEntryPointInfo()->jsMethod);
             this->deferredPrototypeType->SetEntryPointInfo(this->GetDefaultEntryPointInfo());
         }
@@ -5199,6 +5382,14 @@ namespace Js
         {
             this->undeferredFunctionType->SetEntryPoint(this->GetDefaultEntryPointInfo()->jsMethod);
             this->undeferredFunctionType->SetEntryPointInfo(this->GetDefaultEntryPointInfo());
+        }
+        if (this->crossSiteDeferredFunctionType)
+        {
+            this->crossSiteDeferredFunctionType->SetEntryPointInfo(this->GetDefaultEntryPointInfo());
+        }
+        if (this->crossSiteUndeferredFunctionType)
+        {
+            this->crossSiteUndeferredFunctionType->SetEntryPointInfo(this->GetDefaultEntryPointInfo());
         }
         ReinitializeExecutionModeAndLimits();
     }
@@ -5487,7 +5678,7 @@ namespace Js
 
     ScopeType FrameDisplay::GetScopeType(void* scope)
     {
-        if(Js::ActivationObject::Is(scope))
+        if(Js::VarIs<Js::ActivationObject>(scope))
         {
             return ScopeType_ActivationObject;
         }
@@ -5499,7 +5690,7 @@ namespace Js
     }
 
     // ScopeSlots
-    bool ScopeSlots::IsDebuggerScopeSlotArray() 
+    bool ScopeSlots::IsDebuggerScopeSlotArray()
     {
         return DebuggerScope::Is(slotArray[ScopeMetadataSlotIndex]);
     }
@@ -6036,18 +6227,18 @@ namespace Js
         {
             return;
         }
-        this->SetAuxPtr(AuxPointerType::ForInCacheArray, AllocatorNewArrayZ(CacheAllocator, this->GetScriptContext()->GetEnumeratorAllocator(), EnumeratorCache, profiledForInLoopCount));
+        this->SetAuxPtr<AuxPointerType::ForInCacheArray>(AllocatorNewArrayZ(CacheAllocator, this->GetScriptContext()->GetEnumeratorAllocator(), EnumeratorCache, profiledForInLoopCount));
     }
 
     EnumeratorCache * FunctionBody::GetForInCache(uint index)
     {
         Assert(index < this->GetProfiledForInLoopCount());
-        return &((EnumeratorCache *)this->GetAuxPtr(AuxPointerType::ForInCacheArray))[index];
+        return &this->GetAuxPtr<AuxPointerType::ForInCacheArray>()[index];
     }
 
     EnumeratorCache * FunctionBody::GetForInCacheArray()
     {
-        return ((EnumeratorCache *)this->GetAuxPtrWithLock(AuxPointerType::ForInCacheArray));
+        return this->GetAuxPtrWithLock<AuxPointerType::ForInCacheArray>();
     }
 
     void FunctionBody::CleanUpForInCache(bool isShutdown)
@@ -6057,7 +6248,7 @@ namespace Js
         {
             return;
         }
-        EnumeratorCache * forInCacheArray = (EnumeratorCache *)this->GetAuxPtr(AuxPointerType::ForInCacheArray);
+        EnumeratorCache * forInCacheArray = this->GetAuxPtr<AuxPointerType::ForInCacheArray>();
         if (forInCacheArray)
         {
             if (isShutdown)
@@ -6067,7 +6258,7 @@ namespace Js
             else
             {
                 AllocatorDeleteArray(CacheAllocator, this->GetScriptContext()->GetEnumeratorAllocator(), profiledForInLoopCount, forInCacheArray);
-                this->SetAuxPtr(AuxPointerType::ForInCacheArray, nullptr);
+                this->SetAuxPtr<AuxPointerType::ForInCacheArray>(nullptr);
             }
         }
     }
@@ -6343,7 +6534,7 @@ namespace Js
     AsmJsFunctionInfo* FunctionBody::AllocateAsmJsFunctionInfo()
     {
         Assert( !this->GetAsmJsFunctionInfo() );
-        this->SetAuxPtr(AuxPointerType::AsmJsFunctionInfo, RecyclerNew( m_scriptContext->GetRecycler(), AsmJsFunctionInfo));
+        this->SetAuxPtr<AuxPointerType::AsmJsFunctionInfo>(RecyclerNew( m_scriptContext->GetRecycler(), AsmJsFunctionInfo));
         return this->GetAsmJsFunctionInfo();
     }
 
@@ -6351,7 +6542,7 @@ namespace Js
     {
         Assert( !this->GetAsmJsModuleInfo() );
         Recycler* rec = m_scriptContext->GetRecycler();
-        this->SetAuxPtr(AuxPointerType::AsmJsModuleInfo, RecyclerNew(rec, AsmJsModuleInfo, rec));
+        this->SetAuxPtr<AuxPointerType::AsmJsModuleInfo>(RecyclerNew(rec, AsmJsModuleInfo, rec));
         return this->GetAsmJsModuleInfo();
     }
 #endif
@@ -6413,6 +6604,23 @@ namespace Js
         SetSlotIdInCachedScopeToNestedIndexArray(slotIdToNestedIndexArray);
         return slotIdToNestedIndexArray;
     }
+
+#if ENABLE_NATIVE_CODEGEN
+    ProfileId* FunctionBody::CreateCallSiteToCallApplyCallSiteArray()
+    {
+        Assert(this->GetCallSiteToCallApplyCallSiteArray() == nullptr);
+        uint count = this->GetProfiledCallSiteCount();
+        if (count != 0)
+        {
+            this->SetCallSiteToCallApplyCallSiteArray(RecyclerNewArrayLeaf(this->m_scriptContext->GetRecycler(), ProfileId, count));
+            for (uint i = 0; i < count; i++)
+            {
+                this->GetCallSiteToCallApplyCallSiteArray()[i] = Js::Constants::NoProfileId;
+            }
+        }
+        return this->GetCallSiteToCallApplyCallSiteArray();
+    }
+#endif
 
     void FunctionBody::ResetProfileIds()
     {
@@ -6511,7 +6719,8 @@ namespace Js
         return runtimeData;
     }
 
-    FunctionCodeGenRuntimeData *FunctionBody::EnsureInlineeCodeGenRuntimeData(
+    template<Js::FunctionProxy::AuxPointerType auxType>
+    FunctionCodeGenRuntimeData * FunctionBody::EnsureCodeGenRuntimeDataCommon(
         Recycler *const recycler,
         __in_range(0, profiledCallSiteCount - 1) const ProfileId profiledCallSiteId,
         FunctionBody *const inlinee)
@@ -6520,24 +6729,25 @@ namespace Js
         Assert(profiledCallSiteId < profiledCallSiteCount);
         Assert(inlinee);
 
-        if(!this->GetCodeGenRuntimeData())
+        if (this->GetAuxPtr(auxType) == nullptr)
         {
-            const auto codeGenRuntimeData = RecyclerNewArrayZ(recycler, FunctionCodeGenRuntimeData *, profiledCallSiteCount);
-            this->SetCodeGenRuntimeData(codeGenRuntimeData);
+            FunctionCodeGenRuntimeData ** codeGenRuntimeData = RecyclerNewArrayZ(recycler, FunctionCodeGenRuntimeData *, profiledCallSiteCount);
+            this->SetAuxPtr(auxType, codeGenRuntimeData);
         }
 
-        auto codeGenRuntimeData = this->GetCodeGenRuntimeData();
-        const auto inlineeData = codeGenRuntimeData[profiledCallSiteId];
-
-        if(!inlineeData)
+        Field(FunctionCodeGenRuntimeData *)* codeGenRuntimeData = this->GetAuxPtr<auxType>();
+        Field(FunctionCodeGenRuntimeData *) const inlineeData = codeGenRuntimeData[profiledCallSiteId];
+        if (inlineeData == nullptr)
         {
-            return codeGenRuntimeData[profiledCallSiteId] = RecyclerNew(recycler, FunctionCodeGenRuntimeData, inlinee);
+            FunctionCodeGenRuntimeData * runtimeData = RecyclerNew(recycler, FunctionCodeGenRuntimeData, inlinee);
+            codeGenRuntimeData[profiledCallSiteId] = runtimeData;
+            return runtimeData;
         }
 
         // Find the right code gen runtime data
-        FunctionCodeGenRuntimeData *next = inlineeData;
+        FunctionCodeGenRuntimeData * next = inlineeData;
 
-        while(next && (next->GetFunctionBody() != inlinee))
+        while (next && (next->GetFunctionBody() != inlinee))
         {
             next = next->GetNext();
         }
@@ -6547,11 +6757,45 @@ namespace Js
             return next;
         }
 
-        FunctionCodeGenRuntimeData *runtimeData = RecyclerNew(recycler, FunctionCodeGenRuntimeData, inlinee);
+        FunctionCodeGenRuntimeData * runtimeData = RecyclerNew(recycler, FunctionCodeGenRuntimeData, inlinee);
         runtimeData->SetupRuntimeDataChain(inlineeData);
-        return codeGenRuntimeData[profiledCallSiteId] = runtimeData;
+        codeGenRuntimeData[profiledCallSiteId] = runtimeData;
+        return runtimeData;
     }
 
+    FunctionCodeGenRuntimeData *FunctionBody::EnsureInlineeCodeGenRuntimeData(
+        Recycler *const recycler,
+        __in_range(0, profiledCallSiteCount - 1) const ProfileId profiledCallSiteId,
+        FunctionBody *const inlinee)
+    {
+        return EnsureCodeGenRuntimeDataCommon<AuxPointerType::CodeGenRuntimeData>(recycler, profiledCallSiteId, inlinee);
+    }
+
+    FunctionCodeGenRuntimeData * FunctionBody::EnsureCallbackInlineeCodeGenRuntimeData(
+        Recycler *const recycler,
+        __in_range(0, profiledCallSiteCount - 1) const ProfileId profiledCallSiteId,
+        FunctionBody *const inlinee)
+    {
+        return EnsureCodeGenRuntimeDataCommon<AuxPointerType::CodeGenCallbackRuntimeData>(recycler, profiledCallSiteId, inlinee);
+    }
+
+    const FunctionCodeGenRuntimeData * FunctionBody::GetCallApplyTargetInlineeCodeGenRuntimeData(const ProfileId callApplyCallSiteId) const
+    {
+        Assert(callApplyCallSiteId < GetProfiledCallApplyCallSiteCount());
+
+        Field(FunctionCodeGenRuntimeData*)* codeGenRuntimeData = this->GetCodeGenCallApplyTargetRuntimeDataWithLock();
+        return codeGenRuntimeData ? codeGenRuntimeData[callApplyCallSiteId] : nullptr;
+    }
+
+    FunctionCodeGenRuntimeData * FunctionBody::EnsureCallApplyTargetInlineeCodeGenRuntimeData(
+        Recycler *const recycler,
+        const ProfileId callApplyCallSiteId,
+        FunctionBody *const inlinee)
+    {
+        Assert(callApplyCallSiteId < this->GetProfiledCallApplyCallSiteCount());
+        return EnsureCodeGenRuntimeDataCommon<AuxPointerType::CodeGenCallApplyTargetRuntimeData>(recycler, callApplyCallSiteId, inlinee);
+    }
+    
     const FunctionCodeGenRuntimeData *FunctionBody::GetLdFldInlineeCodeGenRuntimeData(const InlineCacheIndex inlineCacheIndex) const
     {
         Assert(inlineCacheIndex < this->GetInlineCacheCount());
@@ -6583,6 +6827,14 @@ namespace Js
         }
 
         return codeGenGetSetRuntimeData[inlineCacheIndex] = RecyclerNew(recycler, FunctionCodeGenRuntimeData, inlinee);
+    }
+
+    const FunctionCodeGenRuntimeData * FunctionBody::GetCallbackInlineeCodeGenRuntimeData(const ProfileId profiledCallSiteId) const
+    {
+        Assert(profiledCallSiteId < profiledCallSiteCount);
+
+        Field(FunctionCodeGenRuntimeData*)* codeGenRuntimeData = this->GetCodeGenCallbackRuntimeDataWithLock();
+        return codeGenRuntimeData ? codeGenRuntimeData[profiledCallSiteId] : nullptr;
     }
 #endif
 
@@ -6633,19 +6885,13 @@ namespace Js
         Recycler *const recycler = this->m_scriptContext->GetRecycler();
         const JavascriptMethod currentThunk = m_scriptContext->CurrentThunk;
 
-        void* validationCookie = nullptr;
-#if ENABLE_NATIVE_CODEGEN
-        validationCookie = (void*)m_scriptContext->GetNativeCodeGenerator();
-#endif
-
         FunctionEntryPointInfo *const entryPointInfo =
             RecyclerNewFinalized(
                 recycler,
                 FunctionEntryPointInfo,
                 this,
                 currentThunk,
-                m_scriptContext->GetThreadContext(),
-                validationCookie);
+                m_scriptContext->GetThreadContext());
 
         AddEntryPointToEntryPointList(entryPointInfo);
 
@@ -6653,14 +6899,17 @@ namespace Js
             // Allocations in this region may trigger expiry and cause unexpected changes to state
             AUTO_NO_EXCEPTION_REGION;
 
-            FunctionEntryPointInfo *const simpleJitEntryPointInfo = GetSimpleJitEntryPointInfo();
             Js::JavascriptMethod originalEntryPoint, directEntryPoint;
+
+#if ENABLE_NATIVE_CODEGEN
+            FunctionEntryPointInfo *const simpleJitEntryPointInfo = GetSimpleJitEntryPointInfo();
             if(simpleJitEntryPointInfo && GetExecutionMode() == ExecutionMode::FullJit)
             {
                 directEntryPoint =
                     originalEntryPoint = simpleJitEntryPointInfo->GetNativeEntrypoint();
             }
             else
+#endif
             {
 #if DYNAMIC_INTERPRETER_THUNK
                 // If the dynamic interpreter thunk hasn't been created yet, then the entry point can be set to
@@ -6699,12 +6948,12 @@ namespace Js
     }
     FunctionEntryPointInfo *FunctionBody::GetSimpleJitEntryPointInfo() const
     {
-        return static_cast<FunctionEntryPointInfo *>(this->GetAuxPtr(AuxPointerType::SimpleJitEntryPointInfo));
+        return this->GetAuxPtr<AuxPointerType::SimpleJitEntryPointInfo>();
     }
 
     void FunctionBody::SetSimpleJitEntryPointInfo(FunctionEntryPointInfo *const entryPointInfo)
     {
-        this->SetAuxPtr(AuxPointerType::SimpleJitEntryPointInfo, entryPointInfo);
+        this->SetAuxPtr<AuxPointerType::SimpleJitEntryPointInfo>(entryPointInfo);
     }
 
 
@@ -7395,6 +7644,7 @@ namespace Js
                     // isShutdown is false because cleanup is called only in the !isShutdown case
                     entryPoint->Finalize(isShutdown);
 
+#if ENABLE_ENTRYPOINT_CLEANUP_TRACE
 #if ENABLE_DEBUG_STACK_BACK_TRACE
                     // Do this separately since calling EntryPoint::Finalize doesn't capture the stack trace
                     // and in some calls to CleanupRecyclerData, we do want the stack trace captured.
@@ -7403,6 +7653,7 @@ namespace Js
                     {
                         entryPoint->CaptureCleanupStackTrace();
                     }
+#endif
 #endif
                 }
             });
@@ -7433,7 +7684,7 @@ namespace Js
             return;
         }
 
-        DebugOnly(this->UnlockCounters());
+        DebugOnly(this->SetIsClosing());
 
         CleanupRecyclerData(isScriptContextClosing, false /* capture entry point cleanup stack trace */);
         CleanUpForInCache(isScriptContextClosing);
@@ -7472,8 +7723,6 @@ namespace Js
 #endif
 
         this->cleanedUp = true;
-
-        DebugOnly(this->LockDownCounters());
     }
 
 
@@ -7500,9 +7749,9 @@ namespace Js
         // DisableJIT-TODO: Move this to be under if DYNAMIC_PROFILE
 #if ENABLE_NATIVE_CODEGEN
         // (See also the FunctionBody member written in CaptureDynamicProfileState.)
-        this->SetSavedPolymorphicCacheState(entryPointInfo->GetPendingPolymorphicCacheState());
-        this->savedInlinerVersion = entryPointInfo->GetPendingInlinerVersion();
-        this->savedImplicitCallsFlags = entryPointInfo->GetPendingImplicitCallFlags();
+        this->SetSavedPolymorphicCacheState(entryPointInfo->GetNativeEntryPointData()->GetPendingPolymorphicCacheState());
+        this->savedInlinerVersion = entryPointInfo->GetNativeEntryPointData()->GetPendingInlinerVersion();
+        this->savedImplicitCallsFlags = entryPointInfo->GetNativeEntryPointData()->GetPendingImplicitCallFlags();
 #endif
     }
 
@@ -7581,10 +7830,7 @@ namespace Js
         for (ProfileId i = 0; i < profiledCallSiteCount; i++)
         {
             Assert(HasDynamicProfileInfo());
-            bool ctor;
-            bool isPolymorphic;
-            FunctionInfo *info = dynamicProfileInfo->GetCallSiteInfo(this, i, &ctor, &isPolymorphic);
-            if (info == nullptr || info->HasBody())
+            if (dynamicProfileInfo->MayHaveNonBuiltinCallee(i))
             {
                 return true;
             }
@@ -7934,37 +8180,131 @@ namespace Js
     }
 
 #if ENABLE_NATIVE_CODEGEN
-    void EntryPointInfo::AddWeakFuncRef(RecyclerWeakReference<FunctionBody> *weakFuncRef, Recycler *recycler)
+    DWORD_PTR EntryPointInfo::GetNativeAddress() const
     {
-        Assert(this->state == CodeGenPending);
+        // need the assert to skip for asmjsFunction as nativeAddress can be interpreter too for asmjs
+        Assert(this->GetState() == CodeGenRecorded || this->GetState() == CodeGenDone || this->isAsmJsFunction);
 
-        this->weakFuncRefSet = this->EnsureWeakFuncRefSet(recycler);
-        this->weakFuncRefSet->AddNew(weakFuncRef);
+        // !! this is illegal, however (by design) `IsInNativeAddressRange` needs it
+        return reinterpret_cast<DWORD_PTR>(this->GetNativeEntryPointData()->GetNativeAddress());
     }
 
-    EntryPointInfo::WeakFuncRefSet *
-    EntryPointInfo::EnsureWeakFuncRefSet(Recycler *recycler)
+    Js::JavascriptMethod EntryPointInfo::GetThunkAddress() const
     {
-        if (this->weakFuncRefSet == nullptr)
+        Assert(this->GetState() == CodeGenRecorded || this->GetState() == CodeGenDone);
+
+        return this->GetNativeEntryPointData()->GetThunkAddress();
+    }
+
+    Js::JavascriptMethod EntryPointInfo::GetNativeEntrypoint() const
+    {
+        Assert(this->GetState() == CodeGenRecorded || this->GetState() == CodeGenDone || this->isAsmJsFunction);
+        Js::JavascriptMethod thunkAddress = this->GetNativeEntryPointData()->GetThunkAddress();
+        return thunkAddress ? thunkAddress : this->GetNativeEntryPointData()->GetNativeAddress();
+    }
+
+    ptrdiff_t EntryPointInfo::GetCodeSize() const
+    {
+        Assert(this->GetState() == CodeGenRecorded || this->GetState() == CodeGenDone);
+        return this->GetNativeEntryPointData()->GetCodeSize();
+    }
+
+    JitTransferData * EntryPointInfo::GetJitTransferData()
+    {
+        return this->GetNativeEntryPointData()->GetJitTransferData();
+    }
+
+    SmallSpanSequence* EntryPointInfo::GetNativeThrowSpanSequence() const
+    {
+        Assert(this->GetState() != NotScheduled);
+        Assert(this->GetState() != CleanedUp);
+        return this->GetNativeEntryPointData()->GetNativeThrowSpanSequence();
+    }
+
+    void EntryPointInfo::SetNativeThrowSpanSequence(SmallSpanSequence* seq)
+    {
+        Assert(this->GetState() == CodeGenQueued);
+        Assert(this->GetNativeEntryPointData()->GetNativeThrowSpanSequence() == nullptr);
+
+        this->GetNativeEntryPointData()->SetNativeThrowSpanSequence(seq);
+    }
+
+    uint EntryPointInfo::GetFrameHeight()
+    {
+        return this->GetNativeEntryPointData()->GetFrameHeight();
+    }
+
+    bool EntryPointInfo::HasInlinees()
+    {
+        return this->GetFrameHeight() > 0;
+    }
+
+    NativeEntryPointData * EntryPointInfo::EnsureNativeEntryPointData()
+    {
+        NativeEntryPointData * data = this->nativeEntryPointData;
+        if (data == nullptr)
         {
-            this->weakFuncRefSet = RecyclerNew(recycler, WeakFuncRefSet, recycler);
+#if ENABLE_OOP_NATIVE_CODEGEN
+            if (JITManager::GetJITManager()->IsOOPJITEnabled())
+            {
+                data = RecyclerNew(this->GetScriptContext()->GetRecycler(), OOPNativeEntryPointData);
+            }
+            else
+#endif
+            {
+                data = RecyclerNew(this->GetScriptContext()->GetRecycler(), InProcNativeEntryPointData);
+            }
+            this->nativeEntryPointData = data;
         }
-
-        return this->weakFuncRefSet;
+        return data;
     }
+
+    bool EntryPointInfo::HasNativeEntryPointData() const
+    {
+        return this->nativeEntryPointData != nullptr;
+    }
+
+    NativeEntryPointData * EntryPointInfo::GetNativeEntryPointData() const
+    {
+        Assert(this->HasNativeEntryPointData());
+        return this->nativeEntryPointData;
+    }
+
+    InProcNativeEntryPointData * EntryPointInfo::GetInProcNativeEntryPointData()
+    {
+        return static_cast<InProcNativeEntryPointData *>(this->GetNativeEntryPointData());
+    }
+
+#if ENABLE_OOP_NATIVE_CODEGEN
+    OOPNativeEntryPointData * EntryPointInfo::GetOOPNativeEntryPointData()
+    {
+        return static_cast<OOPNativeEntryPointData *>(this->GetNativeEntryPointData());
+    }
+#endif
 
     void EntryPointInfo::EnsureIsReadyToCall()
     {
         ProcessJitTransferData();
 
+#if ENABLE_OOP_NATIVE_CODEGEN
 #if !FLOATVAR
-        if (this->numberPageSegments)
+        if (JITManager::GetJITManager()->IsOOPJITEnabled())
         {
-            auto numberArray = this->GetScriptContext()->GetThreadContext()
-                ->GetXProcNumberPageSegmentManager()->RegisterSegments(this->numberPageSegments);
-            this->SetNumberArray(numberArray);
-            this->numberPageSegments = nullptr;
+            this->GetOOPNativeEntryPointData()->ProcessNumberPageSegments(GetScriptContext());
         }
+#endif
+#endif
+    }
+
+    void EntryPointInfo::SetCodeGenRecorded(Js::JavascriptMethod thunkAddress, Js::JavascriptMethod nativeAddress, ptrdiff_t codeSize, void * validationCookie)
+    {
+        Assert(this->GetState() == CodeGenQueued);
+        Assert(codeSize > 0);
+        this->GetNativeEntryPointData()->RecordNativeCode(thunkAddress, nativeAddress, codeSize, validationCookie);
+        this->state = CodeGenRecorded;
+
+#ifdef PERF_COUNTERS
+        this->OnRecorded();
 #endif
     }
 
@@ -8017,31 +8357,18 @@ namespace Js
         {
             PinTypeRefs(scriptContext);
             InstallGuards(scriptContext);
-            FreeJitTransferData();
         }
+
+        FreeJitTransferData();
 
         autoCleanup.Done();
-    }
-
-    EntryPointInfo::JitTransferData* EntryPointInfo::EnsureJitTransferData(Recycler* recycler)
-    {
-        if (this->jitTransferData == nullptr)
-        {
-            this->jitTransferData = RecyclerNew(recycler, EntryPointInfo::JitTransferData);
-        }
-        return this->jitTransferData;
     }
 
     void EntryPointInfo::OnNativeCodeInstallFailure()
     {
         // If more data is transferred from the background thread to the main thread in ProcessJitTransferData,
         // corresponding fields on the entryPointInfo should be rolled back here.
-        this->runtimeTypeRefs = nullptr;
-        this->FreePropertyGuards();
-        this->equivalentTypeCacheCount = 0;
-        this->equivalentTypeCaches = nullptr;
-        this->UnregisterEquivalentTypeCaches();
-
+        this->nativeEntryPointData->ClearTypeRefsAndGuards(GetScriptContext());
         this->ResetOnNativeCodeInstallFailure();
     }
 
@@ -8056,58 +8383,40 @@ namespace Js
     }
 #endif
 
-    void EntryPointInfo::JitTransferData::AddJitTimeTypeRef(void* typeRef, Recycler* recycler)
-    {
-        Assert(typeRef != nullptr);
-        EnsureJitTimeTypeRefs(recycler);
-        this->jitTimeTypeRefs->AddNew(typeRef);
-    }
-
-    void EntryPointInfo::JitTransferData::EnsureJitTimeTypeRefs(Recycler* recycler)
-    {
-        if (this->jitTimeTypeRefs == nullptr)
-        {
-            this->jitTimeTypeRefs = RecyclerNew(recycler, TypeRefSet, recycler);
-        }
-    }
 
     void EntryPointInfo::PinTypeRefs(ScriptContext* scriptContext)
     {
-        Assert(this->jitTransferData != nullptr && this->jitTransferData->GetIsReady());
+        NativeEntryPointData * nativeEntryPointData = this->GetNativeEntryPointData();
+        JitTransferData * jitTransferData = nativeEntryPointData->GetJitTransferData();
+        Assert(jitTransferData != nullptr && jitTransferData->GetIsReady());
 
         Recycler* recycler = scriptContext->GetRecycler();
-        if (this->jitTransferData->GetRuntimeTypeRefs() != nullptr)
+        if (jitTransferData->GetRuntimeTypeRefs() != nullptr)
         {
             // Copy pinned types from a heap allocated array created on the background thread
             // to a recycler allocated array which will live as long as this EntryPointInfo.
             // The original heap allocated array will be freed at the end of NativeCodeGenerator::CheckCodeGenDone
-            void** jitPinnedTypeRefs = this->jitTransferData->GetRuntimeTypeRefs();
-            size_t jitPinnedTypeRefCount = this->jitTransferData->GetRuntimeTypeRefCount();
-            this->runtimeTypeRefs = RecyclerNewArray(recycler, Field(void*), jitPinnedTypeRefCount + 1);
-            //js_memcpy_s(this->runtimeTypeRefs, jitPinnedTypeRefCount * sizeof(void*), jitPinnedTypeRefs, jitPinnedTypeRefCount * sizeof(void*));
-            for (size_t i = 0; i < jitPinnedTypeRefCount; i++)
-            {
-                this->runtimeTypeRefs[i] = jitPinnedTypeRefs[i];
-            }
-            this->runtimeTypeRefs[jitPinnedTypeRefCount] = nullptr;
+            void** jitPinnedTypeRefs = jitTransferData->GetRuntimeTypeRefs();
+            size_t jitPinnedTypeRefCount = jitTransferData->GetRuntimeTypeRefCount();
+            nativeEntryPointData->PinTypeRefs(recycler, jitPinnedTypeRefCount, jitPinnedTypeRefs);
         }
     }
 
     void EntryPointInfo::InstallGuards(ScriptContext* scriptContext)
     {
-        Assert(this->jitTransferData != nullptr && this->jitTransferData->GetIsReady());
-        Assert(this->equivalentTypeCacheCount == 0 && this->equivalentTypeCaches == nullptr);
-        Assert(this->propertyGuardCount == 0 && this->propertyGuardWeakRefs == nullptr);
+        NativeEntryPointData * nativeEntryPointData = this->GetNativeEntryPointData();
+        JitTransferData * jitTransferData = this->GetNativeEntryPointData()->GetJitTransferData();
+        Assert(jitTransferData != nullptr && jitTransferData->GetIsReady());
 
-        for (int i = 0; i < this->jitTransferData->lazyBailoutPropertyCount; i++)
+        for (int i = 0; i < jitTransferData->lazyBailoutPropertyCount; i++)
         {
-            Assert(this->jitTransferData->lazyBailoutProperties != nullptr);
+            Assert(jitTransferData->lazyBailoutProperties != nullptr);
 
-            Js::PropertyId propertyId = this->jitTransferData->lazyBailoutProperties[i];
+            Js::PropertyId propertyId = jitTransferData->lazyBailoutProperties[i];
             Js::PropertyGuard* sharedPropertyGuard = nullptr;
-            bool hasSharedPropertyGuard = TryGetSharedPropertyGuard(propertyId, sharedPropertyGuard);
+            bool hasSharedPropertyGuard = nativeEntryPointData->TryGetSharedPropertyGuard(propertyId, sharedPropertyGuard);
             Assert(hasSharedPropertyGuard);
-            bool isValid = hasSharedPropertyGuard ? sharedPropertyGuard->IsValid() : false;
+            bool isValid = hasSharedPropertyGuard && sharedPropertyGuard->IsValid();
             if (isValid)
             {
                 scriptContext->GetThreadContext()->RegisterLazyBailout(propertyId, this);
@@ -8122,28 +8431,15 @@ namespace Js
 
 
         // in-proc JIT
-        if (this->jitTransferData->equivalentTypeGuardCount > 0)
+        if (jitTransferData->equivalentTypeGuardCount > 0)
         {
             Assert(jitTransferData->equivalentTypeGuardOffsets == nullptr);
-            Assert(this->jitTransferData->equivalentTypeGuards != nullptr);
+            Assert(jitTransferData->equivalentTypeGuards != nullptr);
 
-            Recycler* recycler = scriptContext->GetRecycler();
+            int guardCount = jitTransferData->equivalentTypeGuardCount;
+            JitEquivalentTypeGuard** guards = jitTransferData->equivalentTypeGuards;
 
-            int guardCount = this->jitTransferData->equivalentTypeGuardCount;
-            JitEquivalentTypeGuard** guards = this->jitTransferData->equivalentTypeGuards;
-
-            // Create an array of equivalent type caches on the entry point info to ensure they are kept
-            // alive for the lifetime of the entry point.
-            this->equivalentTypeCacheCount = guardCount;
-
-            // No need to zero-initialize, since we will populate all data slots.
-            // We used to let the recycler scan the types in the cache, but we no longer do. See
-            // ThreadContext::ClearEquivalentTypeCaches for an explanation.
-            this->equivalentTypeCaches = RecyclerNewArrayLeafZ(recycler, EquivalentTypeCache, guardCount);
-
-            this->RegisterEquivalentTypeCaches();
-
-            EquivalentTypeCache* cache = this->equivalentTypeCaches;
+            EquivalentTypeCache * cache = nativeEntryPointData->EnsureEquivalentTypeCache(guardCount, scriptContext, this);
 
             for (JitEquivalentTypeGuard** guard = guards; guard < guards + guardCount; guard++)
             {
@@ -8174,36 +8470,24 @@ namespace Js
             }
         }
 
+#if ENABLE_OOP_NATIVE_CODEGEN
         if (jitTransferData->equivalentTypeGuardOffsets)
         {
-            Recycler* recycler = scriptContext->GetRecycler();
-
             // InstallGuards
             int guardCount = jitTransferData->equivalentTypeGuardOffsets->count;
-
-            // Create an array of equivalent type caches on the entry point info to ensure they are kept
-            // alive for the lifetime of the entry point.
-            this->equivalentTypeCacheCount = guardCount;
-
-            // No need to zero-initialize, since we will populate all data slots.
-            // We used to let the recycler scan the types in the cache, but we no longer do. See
-            // ThreadContext::ClearEquivalentTypeCaches for an explanation.
-            this->equivalentTypeCaches = RecyclerNewArrayLeafZ(recycler, EquivalentTypeCache, guardCount);
-
-            this->RegisterEquivalentTypeCaches();
-            EquivalentTypeCache* cache = this->equivalentTypeCaches;
-
+            EquivalentTypeCache* cache = this->nativeEntryPointData->EnsureEquivalentTypeCache(guardCount, scriptContext, this);
+            char * nativeDataBuffer = this->GetOOPNativeEntryPointData()->GetNativeDataBuffer();
             for (int i = 0; i < guardCount; i++)
             {
                 auto& cacheIDL = jitTransferData->equivalentTypeGuardOffsets->guards[i].cache;
                 auto guardOffset = jitTransferData->equivalentTypeGuardOffsets->guards[i].offset;
-                JitEquivalentTypeGuard* guard = (JitEquivalentTypeGuard*)(this->GetNativeDataBuffer() + guardOffset);
+                JitEquivalentTypeGuard* guard = (JitEquivalentTypeGuard*)(nativeDataBuffer + guardOffset);
                 cache[i].guard = guard;
                 cache[i].hasFixedValue = cacheIDL.hasFixedValue != 0;
                 cache[i].isLoadedFromProto = cacheIDL.isLoadedFromProto != 0;
                 cache[i].nextEvictionVictim = cacheIDL.nextEvictionVictim;
                 cache[i].record.propertyCount = cacheIDL.record.propertyCount;
-                cache[i].record.properties = (EquivalentPropertyEntry*)(this->GetNativeDataBuffer() + cacheIDL.record.propertyOffset);
+                cache[i].record.properties = (EquivalentPropertyEntry*)(nativeDataBuffer + cacheIDL.record.propertyOffset);
                 for (int j = 0; j < EQUIVALENT_TYPE_CACHE_SIZE; j++)
                 {
                     cache[i].types[j] = (Js::Type*)cacheIDL.types[j];
@@ -8215,8 +8499,8 @@ namespace Js
         // OOP JIT
         if (jitTransferData->typeGuardTransferData.entries != nullptr)
         {
-            this->propertyGuardCount = jitTransferData->typeGuardTransferData.propertyGuardCount;
-            this->propertyGuardWeakRefs = RecyclerNewArrayZ(scriptContext->GetRecycler(), Field(FakePropertyGuardWeakReference*), this->propertyGuardCount);
+            int propertyGuardCount = jitTransferData->typeGuardTransferData.propertyGuardCount;
+            Field(FakePropertyGuardWeakReference*) * propertyGuardWeakRefs = this->nativeEntryPointData->EnsurePropertyGuardWeakRefs(propertyGuardCount, scriptContext->GetRecycler());
             ThreadContext* threadContext = scriptContext->GetThreadContext();
             auto next = &jitTransferData->typeGuardTransferData.entries;
             while (*next)
@@ -8228,24 +8512,25 @@ namespace Js
                 // we were JIT-ing. If we don't have a shared property guard for this property then we must not need to protect it,
                 // because it exists on the instance.  Unfortunately, this means that if we have a bug and fail to create a shared
                 // guard for some property during work item creation, we won't find out about it here.
-                bool isNeeded = TryGetSharedPropertyGuard(propertyId, sharedPropertyGuard);
+                bool isNeeded = nativeEntryPointData->TryGetSharedPropertyGuard(propertyId, sharedPropertyGuard);
                 bool isValid = isNeeded ? sharedPropertyGuard->IsValid() : false;
                 if (isNeeded)
                 {
+                    char * nativeDataBuffer = this->GetOOPNativeEntryPointData()->GetNativeDataBuffer();
                     for (unsigned int i = 0; i < (*next)->guardsCount; i++)
                     {
-                        Js::JitIndexedPropertyGuard* guard = (Js::JitIndexedPropertyGuard*)(this->nativeDataBuffer + (*next)->guardOffsets[i]);
+                        Js::JitIndexedPropertyGuard* guard = (Js::JitIndexedPropertyGuard*)(nativeDataBuffer + (*next)->guardOffsets[i]);
                         int guardIndex = guard->GetIndex();
-                        Assert(guardIndex >= 0 && guardIndex < this->propertyGuardCount);
+                        Assert(guardIndex >= 0 && guardIndex < propertyGuardCount);
                         // We use the shared guard here to make sure the conditions we assumed didn't change while we were JIT-ing.
                         // If they did, we proactively invalidate the guard here, so that we bail out if we try to call this code.
                         if (isValid)
                         {
-                            auto propertyGuardWeakRef = this->propertyGuardWeakRefs[guardIndex];
+                            auto propertyGuardWeakRef = propertyGuardWeakRefs[guardIndex];
                             if (propertyGuardWeakRef == nullptr)
                             {
                                 propertyGuardWeakRef = Js::FakePropertyGuardWeakReference::New(scriptContext->GetRecycler(), guard);
-                                this->propertyGuardWeakRefs[guardIndex] = propertyGuardWeakRef;
+                                propertyGuardWeakRefs[guardIndex] = propertyGuardWeakRef;
                             }
                             Assert(propertyGuardWeakRef->Get() == guard);
                             threadContext->RegisterUniquePropertyGuard(propertyId, propertyGuardWeakRef);
@@ -8259,18 +8544,19 @@ namespace Js
                 *next = (*next)->next;
             }
         }
+#endif
 
         // in-proc JIT
         // The propertyGuardsByPropertyId structure is temporary and serves only to register the type guards for the correct
         // properties.  If we've done code gen for this EntryPointInfo, typePropertyGuardsByPropertyId will have been used and nulled out.
-        if (this->jitTransferData->propertyGuardsByPropertyId != nullptr)
+        if (jitTransferData->propertyGuardsByPropertyId != nullptr)
         {
-            this->propertyGuardCount = this->jitTransferData->propertyGuardCount;
-            this->propertyGuardWeakRefs = RecyclerNewArrayZ(scriptContext->GetRecycler(), Field(FakePropertyGuardWeakReference*), this->propertyGuardCount);
+            int propertyGuardCount = jitTransferData->propertyGuardCount;
+            Field(FakePropertyGuardWeakReference*) * propertyGuardWeakRefs = nativeEntryPointData->EnsurePropertyGuardWeakRefs(propertyGuardCount, scriptContext->GetRecycler());
 
             ThreadContext* threadContext = scriptContext->GetThreadContext();
 
-            Js::TypeGuardTransferEntry* entry = this->jitTransferData->propertyGuardsByPropertyId;
+            Js::TypeGuardTransferEntry* entry = jitTransferData->propertyGuardsByPropertyId;
             while (entry->propertyId != Js::Constants::NoProperty)
             {
                 Js::PropertyId propertyId = entry->propertyId;
@@ -8280,7 +8566,7 @@ namespace Js
                 // we were JIT-ing. If we don't have a shared property guard for this property then we must not need to protect it,
                 // because it exists on the instance.  Unfortunately, this means that if we have a bug and fail to create a shared
                 // guard for some property during work item creation, we won't find out about it here.
-                bool isNeeded = TryGetSharedPropertyGuard(propertyId, sharedPropertyGuard);
+                bool isNeeded = nativeEntryPointData->TryGetSharedPropertyGuard(propertyId, sharedPropertyGuard);
                 bool isValid = isNeeded ? sharedPropertyGuard->IsValid() : false;
                 int entryGuardIndex = 0;
                 while (entry->guards[entryGuardIndex] != nullptr)
@@ -8289,16 +8575,16 @@ namespace Js
                     {
                         Js::JitIndexedPropertyGuard* guard = entry->guards[entryGuardIndex];
                         int guardIndex = guard->GetIndex();
-                        Assert(guardIndex >= 0 && guardIndex < this->propertyGuardCount);
+                        Assert(guardIndex >= 0 && guardIndex < propertyGuardCount);
                         // We use the shared guard here to make sure the conditions we assumed didn't change while we were JIT-ing.
                         // If they did, we proactively invalidate the guard here, so that we bail out if we try to call this code.
                         if (isValid)
                         {
-                            auto propertyGuardWeakRef = this->propertyGuardWeakRefs[guardIndex];
+                            auto propertyGuardWeakRef = propertyGuardWeakRefs[guardIndex];
                             if (propertyGuardWeakRef == nullptr)
                             {
                                 propertyGuardWeakRef = Js::FakePropertyGuardWeakReference::New(scriptContext->GetRecycler(), guard);
-                                this->propertyGuardWeakRefs[guardIndex] = propertyGuardWeakRef;
+                                propertyGuardWeakRefs[guardIndex] = propertyGuardWeakRef;
                             }
                             Assert(propertyGuardWeakRef->Get() == guard);
                             threadContext->RegisterUniquePropertyGuard(propertyId, propertyGuardWeakRef);
@@ -8325,8 +8611,8 @@ namespace Js
         {
             ThreadContext* threadContext = scriptContext->GetThreadContext();
 
-            CtorCacheTransferEntryIDL ** entries = this->jitTransferData->ctorCacheTransferData.entries;
-            for (uint i = 0; i < this->jitTransferData->ctorCacheTransferData.ctorCachesCount; ++i)
+            CtorCacheTransferEntryIDL ** entries = jitTransferData->ctorCacheTransferData.entries;
+            for (uint i = 0; i < jitTransferData->ctorCacheTransferData.ctorCachesCount; ++i)
             {
                 Js::PropertyId propertyId = entries[i]->propId;
                 Js::PropertyGuard* sharedPropertyGuard = nullptr;
@@ -8335,7 +8621,7 @@ namespace Js
                 // we were JIT-ing. If we don't have a shared property guard for this property then we must not need to protect it,
                 // because it exists on the instance.  Unfortunately, this means that if we have a bug and fail to create a shared
                 // guard for some property during work item creation, we won't find out about it here.
-                bool isNeeded = TryGetSharedPropertyGuard(propertyId, sharedPropertyGuard);
+                bool isNeeded = nativeEntryPointData->TryGetSharedPropertyGuard(propertyId, sharedPropertyGuard);
                 bool isValid = isNeeded ? sharedPropertyGuard->IsValid() : false;
 
                 if (isNeeded)
@@ -8358,11 +8644,11 @@ namespace Js
             }
         }
 
-        if (this->jitTransferData->ctorCacheGuardsByPropertyId != nullptr)
+        if (jitTransferData->ctorCacheGuardsByPropertyId != nullptr)
         {
             ThreadContext* threadContext = scriptContext->GetThreadContext();
 
-            Js::CtorCacheGuardTransferEntry* entry = this->jitTransferData->ctorCacheGuardsByPropertyId;
+            Js::CtorCacheGuardTransferEntry* entry = jitTransferData->ctorCacheGuardsByPropertyId;
             while (entry->propertyId != Js::Constants::NoProperty)
             {
                 Js::PropertyId propertyId = entry->propertyId;
@@ -8372,7 +8658,7 @@ namespace Js
                 // we were JIT-ing. If we don't have a shared property guard for this property then we must not need to protect it,
                 // because it exists on the instance.  Unfortunately, this means that if we have a bug and fail to create a shared
                 // guard for some property during work item creation, we won't find out about it here.
-                bool isNeeded = TryGetSharedPropertyGuard(propertyId, sharedPropertyGuard);
+                bool isNeeded = nativeEntryPointData->TryGetSharedPropertyGuard(propertyId, sharedPropertyGuard);
                 bool isValid = isNeeded ? sharedPropertyGuard->IsValid() : false;
                 int entryCacheIndex = 0;
                 while (entry->caches[entryCacheIndex] != 0)
@@ -8403,156 +8689,24 @@ namespace Js
         }
     }
 
-    PropertyGuard* EntryPointInfo::RegisterSharedPropertyGuard(Js::PropertyId propertyId, ScriptContext* scriptContext)
-    {
-        if (this->sharedPropertyGuards == nullptr)
-        {
-            Recycler* recycler = scriptContext->GetRecycler();
-            this->sharedPropertyGuards = RecyclerNew(recycler, SharedPropertyGuardDictionary, recycler);
-        }
-
-        PropertyGuard* guard = nullptr;
-        if (!this->sharedPropertyGuards->TryGetValue(propertyId, &guard))
-        {
-            ThreadContext* threadContext = scriptContext->GetThreadContext();
-            guard = threadContext->RegisterSharedPropertyGuard(propertyId);
-            this->sharedPropertyGuards->Add(propertyId, guard);
-        }
-        return guard;
-    }
-
-    Js::PropertyId* EntryPointInfo::GetSharedPropertyGuards(_Out_ unsigned int& count)
-    {
-        Js::PropertyId* sharedPropertyGuards = nullptr;
-        unsigned int guardCount = 0;
-
-        if (this->sharedPropertyGuards != nullptr)
-        {
-            const unsigned int sharedPropertyGuardsCount = (unsigned int)this->sharedPropertyGuards->Count();
-            Js::PropertyId* guards = RecyclerNewArray(this->GetScriptContext()->GetRecycler(), Js::PropertyId, sharedPropertyGuardsCount);
-            auto sharedGuardIter = this->sharedPropertyGuards->GetIterator();
-
-            while (sharedGuardIter.IsValid())
-            {
-                AnalysisAssert(guardCount < sharedPropertyGuardsCount);
-                guards[guardCount] = sharedGuardIter.CurrentKey();
-                sharedGuardIter.MoveNext();
-                ++guardCount;
-            }
-            AnalysisAssert(guardCount == sharedPropertyGuardsCount);
-
-            sharedPropertyGuards = guards;
-        }
-
-        count = guardCount;
-        return sharedPropertyGuards;
-    }
-
-    bool EntryPointInfo::TryGetSharedPropertyGuard(Js::PropertyId propertyId, Js::PropertyGuard*& guard)
-    {
-        return this->sharedPropertyGuards != nullptr ? this->sharedPropertyGuards->TryGetValue(propertyId, &guard) : false;
-    }
-
-    void EntryPointInfo::RecordTypeGuards(int typeGuardCount, TypeGuardTransferEntry* typeGuardTransferRecord, size_t typeGuardTransferPlusSize)
-    {
-        Assert(this->jitTransferData != nullptr);
-
-        this->jitTransferData->propertyGuardCount = typeGuardCount;
-        this->jitTransferData->propertyGuardsByPropertyId = typeGuardTransferRecord;
-        this->jitTransferData->propertyGuardsByPropertyIdPlusSize = typeGuardTransferPlusSize;
-    }
-
-    void EntryPointInfo::RecordCtorCacheGuards(CtorCacheGuardTransferEntry* ctorCacheTransferRecord, size_t ctorCacheTransferPlusSize)
-    {
-        Assert(this->jitTransferData != nullptr);
-
-        this->jitTransferData->ctorCacheGuardsByPropertyId = ctorCacheTransferRecord;
-        this->jitTransferData->ctorCacheGuardsByPropertyIdPlusSize = ctorCacheTransferPlusSize;
-    }
-
-    void EntryPointInfo::FreePropertyGuards()
-    {
-        // While typePropertyGuardWeakRefs are allocated via NativeCodeData::Allocator and will be automatically freed to the heap,
-        // we must zero out the fake weak references so that property guard invalidation doesn't access freed memory.
-        if (this->propertyGuardWeakRefs != nullptr)
-        {
-            for (int i = 0; i < this->propertyGuardCount; i++)
-            {
-                if (this->propertyGuardWeakRefs[i] != nullptr)
-                {
-                    this->propertyGuardWeakRefs[i]->Zero();
-                }
-            }
-            this->propertyGuardCount = 0;
-            this->propertyGuardWeakRefs = nullptr;
-        }
-    }
-
-    void EntryPointInfo::RecordBailOutMap(JsUtil::List<LazyBailOutRecord, ArenaAllocator>* bailoutMap)
-    {
-        Assert(this->bailoutRecordMap == nullptr);
-        this->bailoutRecordMap = HeapNew(BailOutRecordMap, &HeapAllocator::Instance);
-        this->bailoutRecordMap->Copy(bailoutMap);
-    }
-
-    void EntryPointInfo::RecordInlineeFrameMap(JsUtil::List<NativeOffsetInlineeFramePair, ArenaAllocator>* tempInlineeFrameMap)
-    {
-        Assert(this->inlineeFrameMap == nullptr);
-        if (tempInlineeFrameMap->Count() > 0)
-        {
-            this->inlineeFrameMap = HeapNew(InlineeFrameMap, &HeapAllocator::Instance);
-            this->inlineeFrameMap->Copy(tempInlineeFrameMap);
-        }
-    }
-    void EntryPointInfo::RecordInlineeFrameOffsetsInfo(unsigned int offsetsArrayOffset, unsigned int offsetsArrayCount)
-    {
-        this->inlineeFrameOffsetArrayOffset = offsetsArrayOffset;
-        this->inlineeFrameOffsetArrayCount = offsetsArrayCount;
-    }
-
     InlineeFrameRecord* EntryPointInfo::FindInlineeFrame(void* returnAddress)
     {
-        if (this->nativeDataBuffer == nullptr) // in-proc JIT
+#if ENABLE_OOP_NATIVE_CODEGEN
+        if (JITManager::GetJITManager()->IsOOPJITEnabled())  // OOP JIT
         {
-            if (this->inlineeFrameMap == nullptr)
-            {
-                return nullptr;
-            }
-
-            size_t offset = (size_t)((BYTE*)returnAddress - (BYTE*)this->GetNativeAddress());
-            int index = this->inlineeFrameMap->BinarySearch([=](const NativeOffsetInlineeFramePair& pair, int index) {
-                if (pair.offset >= offset)
-                {
-                    if (index == 0 || (index > 0 && this->inlineeFrameMap->Item(index - 1).offset < offset))
-                    {
-                        return 0;
-                    }
-                    else
-                    {
-                        return 1;
-                    }
-                }
-                return -1;
-            });
-
-            if (index == -1)
-            {
-                return nullptr;
-            }
-            return this->inlineeFrameMap->Item(index).record;
-        }
-        else // OOP JIT
-        {
-            NativeOffsetInlineeFrameRecordOffset* offsets = (NativeOffsetInlineeFrameRecordOffset*)(this->nativeDataBuffer + this->inlineeFrameOffsetArrayOffset);
+            OOPNativeEntryPointData * oopNativeEntryPointData = this->GetOOPNativeEntryPointData();
+            char * nativeDataBuffer = oopNativeEntryPointData->GetNativeDataBuffer();
+            NativeOffsetInlineeFrameRecordOffset* offsets = (NativeOffsetInlineeFrameRecordOffset*)(nativeDataBuffer + oopNativeEntryPointData->GetInlineeFrameOffsetArrayOffset());
             size_t offset = (size_t)((BYTE*)returnAddress - (BYTE*)this->GetNativeAddress());
 
-            if (this->inlineeFrameOffsetArrayCount == 0)
+            uint inlineeFrameOffsetArrayCount = oopNativeEntryPointData->GetInlineeFrameOffsetArrayCount();
+            if (inlineeFrameOffsetArrayCount == 0)
             {
                 return nullptr;
             }
 
             uint fromIndex = 0;
-            uint toIndex = this->inlineeFrameOffsetArrayCount - 1;
+            uint toIndex = inlineeFrameOffsetArrayCount - 1;
             while (fromIndex <= toIndex)
             {
                 uint midIndex = fromIndex + (toIndex - fromIndex) / 2;
@@ -8568,7 +8722,7 @@ namespace Js
                         }
                         else
                         {
-                            return (InlineeFrameRecord*)(this->nativeDataBuffer + offsets[midIndex].recordOffset);
+                            return (InlineeFrameRecord*)(nativeDataBuffer + offsets[midIndex].recordOffset);
                         }
                     }
                     else
@@ -8583,187 +8737,117 @@ namespace Js
             }
             return nullptr;
         }
+        else
+#endif
+        // in-proc JIT
+        {
+            InlineeFrameMap * inlineeFrameMap = this->GetInProcNativeEntryPointData()->GetInlineeFrameMap();
+            if (inlineeFrameMap == nullptr)
+            {
+                return nullptr;
+            }
+
+            size_t offset = (size_t)((BYTE*)returnAddress - (BYTE*)this->GetNativeAddress());
+            int index = inlineeFrameMap->BinarySearch([=](const NativeOffsetInlineeFramePair& pair, int index) {
+                if (pair.offset >= offset)
+                {
+                    if (index == 0 || (index > 0 && inlineeFrameMap->Item(index - 1).offset < offset))
+                    {
+                        return 0;
+                    }
+                    else
+                    {
+                        return 1;
+                    }
+                }
+                return -1;
+            });
+
+            if (index == -1)
+            {
+                return nullptr;
+            }
+            return inlineeFrameMap->Item(index).record;
+        }
+
     }
 
-    void EntryPointInfo::DoLazyBailout(BYTE** addressOfInstructionPointer, Js::FunctionBody* functionBody, const PropertyRecord* propertyRecord)
+    void EntryPointInfo::DoLazyBailout(
+        BYTE **addressOfInstructionPointer,
+        BYTE *framePointer
+#if DBG
+        , Js::FunctionBody *functionBody
+        , const PropertyRecord *propertyRecord
+#endif
+    )
     {
         BYTE* instructionPointer = *addressOfInstructionPointer;
-        Assert(instructionPointer > (BYTE*)this->nativeAddress && instructionPointer < ((BYTE*)this->nativeAddress + this->codeSize));
-        size_t offset = instructionPointer - (BYTE*)this->nativeAddress;
-        int found = this->bailoutRecordMap->BinarySearch([=](const LazyBailOutRecord& record, int index)
+        NativeEntryPointData * nativeEntryPointData = this->GetNativeEntryPointData();
+        Js::JavascriptMethod nativeAddress = nativeEntryPointData->GetNativeAddress();
+        ptrdiff_t codeSize = nativeEntryPointData->GetCodeSize();
+        Assert(instructionPointer > (BYTE*)nativeAddress && instructionPointer < ((BYTE*)nativeAddress + codeSize));
+        size_t offset = instructionPointer - (BYTE*)nativeAddress;
+        NativeLazyBailOutRecordList * bailOutRecordList = this->GetInProcNativeEntryPointData()->GetSortedLazyBailOutRecordList();
+
+        AssertMsg(bailOutRecordList != nullptr, "Lazy Bailout: bailOutRecordList is missing");
+
+        int found = bailOutRecordList->BinarySearch([=](const LazyBailOutRecord& record, int index)
         {
-            // find the closest entry which is greater than the current offset.
-            if (record.offset >= offset)
+            if (record.offset == offset)
             {
-                if (index == 0 || (index > 0 && this->bailoutRecordMap->Item(index - 1).offset < offset))
-                {
-                    return 0;
-                }
-                else
-                {
-                    return 1;
-                }
+                return 0;
             }
-            return -1;
+            else if (record.offset > offset)
+            {
+                return 1;
+            }
+            else
+            {
+                return -1;
+            }
         });
+
         if (found != -1)
         {
-            LazyBailOutRecord& record = this->bailoutRecordMap->Item(found);
-            *addressOfInstructionPointer = record.instructionPointer;
-            record.SetBailOutKind();
+            auto inProcNativeEntryPointData = this->GetInProcNativeEntryPointData();
+            const LazyBailOutRecord& record = bailOutRecordList->Item(found);
+            const uint32 lazyBailOutThunkOffset = inProcNativeEntryPointData->GetLazyBailOutThunkOffset();
+            BYTE * const lazyBailOutThunkAddress = (BYTE *) nativeAddress + lazyBailOutThunkOffset;
+
+            // Change the instruction pointer of the frame to our thunk so that
+            // when execution returns back to this frame, we will execute the thunk instead
+            *addressOfInstructionPointer = lazyBailOutThunkAddress;
+
+            // Put the BailOutRecord corresponding to our LazyBailOut point on the pre-allocated slot on the stack
+            BYTE *addressOfLazyBailOutRecordSlot = framePointer + inProcNativeEntryPointData->GetLazyBailOutRecordSlotOffset();
+            *(reinterpret_cast<intptr_t *>(addressOfLazyBailOutRecordSlot)) = reinterpret_cast<intptr_t>(record.bailOutRecord);
+            
             if (PHASE_TRACE1(Js::LazyBailoutPhase))
             {
-                Output::Print(_u("On stack lazy bailout. Property: %s Old IP: 0x%x New IP: 0x%x "), propertyRecord->GetBuffer(), instructionPointer, record.instructionPointer);
 #if DBG
+                Output::Print(_u("On stack lazy bailout. Property: %s Old IP: 0x%x New IP: 0x%x "), propertyRecord->GetBuffer(), instructionPointer, lazyBailOutThunkAddress);
                 record.Dump(functionBody);
-#endif
                 Output::Print(_u("\n"));
+#endif
             }
         }
         else
         {
-            AssertMsg(false, "Lazy Bailout address mapping missing");
+            AssertMsg(false, "Lazy Bailout: Address mapping missing");
         }
     }
 
     void EntryPointInfo::FreeJitTransferData()
     {
-        JitTransferData* jitTransferData = this->jitTransferData;
-        this->jitTransferData = nullptr;
-
-        if (jitTransferData != nullptr)
+        if (this->HasNativeEntryPointData())
         {
-            // This dictionary is recycler allocated so it doesn't need to be explicitly freed.
-            jitTransferData->jitTimeTypeRefs = nullptr;
-
-            if (jitTransferData->lazyBailoutProperties != nullptr)
-            {
-                HeapDeleteArray(jitTransferData->lazyBailoutPropertyCount, jitTransferData->lazyBailoutProperties);
-                jitTransferData->lazyBailoutProperties = nullptr;
-            }
-
-            // All structures below are heap allocated and need to be freed explicitly.
-            if (jitTransferData->runtimeTypeRefs != nullptr)
-            {
-                if (jitTransferData->runtimeTypeRefs->isOOPJIT)
-                {
-                    midl_user_free(jitTransferData->runtimeTypeRefs);
-                }
-                else
-                {
-                    HeapDeletePlus(offsetof(PinnedTypeRefsIDL, typeRefs) + sizeof(void*)*jitTransferData->runtimeTypeRefs->count - sizeof(PinnedTypeRefsIDL),
-                        PointerValue(jitTransferData->runtimeTypeRefs));
-                }
-                jitTransferData->runtimeTypeRefs = nullptr;
-            }
-
-            if (jitTransferData->propertyGuardsByPropertyId != nullptr)
-            {
-                HeapDeletePlus(jitTransferData->propertyGuardsByPropertyIdPlusSize, jitTransferData->propertyGuardsByPropertyId);
-                jitTransferData->propertyGuardsByPropertyId = nullptr;
-            }
-            jitTransferData->propertyGuardCount = 0;
-            jitTransferData->propertyGuardsByPropertyIdPlusSize = 0;
-
-            if (jitTransferData->ctorCacheGuardsByPropertyId != nullptr)
-            {
-                HeapDeletePlus(jitTransferData->ctorCacheGuardsByPropertyIdPlusSize, jitTransferData->ctorCacheGuardsByPropertyId);
-                jitTransferData->ctorCacheGuardsByPropertyId = nullptr;
-            }
-            jitTransferData->ctorCacheGuardsByPropertyIdPlusSize = 0;
-
-            if (jitTransferData->equivalentTypeGuards != nullptr)
-            {
-                HeapDeleteArray(jitTransferData->equivalentTypeGuardCount, jitTransferData->equivalentTypeGuards);
-                jitTransferData->equivalentTypeGuards = nullptr;
-            }
-            jitTransferData->equivalentTypeGuardCount = 0;
-
-            if (jitTransferData->jitTransferRawData != nullptr)
-            {
-                HeapDelete(jitTransferData->jitTransferRawData);
-                jitTransferData->jitTransferRawData = nullptr;
-            }
-
-            if (jitTransferData->equivalentTypeGuardOffsets)
-            {
-                midl_user_free(jitTransferData->equivalentTypeGuardOffsets);
-            }
-
-            if (jitTransferData->typeGuardTransferData.entries != nullptr)
-            {
-                auto next = &jitTransferData->typeGuardTransferData.entries;
-                while (*next)
-                {
-                    auto current = (*next);
-                    *next = (*next)->next;
-                    midl_user_free(current);
-                }
-            }
-
-            if (jitTransferData->ctorCacheTransferData.entries != nullptr)
-            {
-                CtorCacheTransferEntryIDL ** entries = jitTransferData->ctorCacheTransferData.entries;
-                for (uint i = 0; i < jitTransferData->ctorCacheTransferData.ctorCachesCount; ++i)
-                {
-                    midl_user_free(entries[i]);
-                }
-                midl_user_free(entries);
-            }
-
-            jitTransferData = nullptr;
-        }
-    }
-
-    void EntryPointInfo::RegisterEquivalentTypeCaches()
-    {
-        Assert(this->registeredEquivalentTypeCacheRef == nullptr);
-        this->registeredEquivalentTypeCacheRef =
-            GetScriptContext()->GetThreadContext()->RegisterEquivalentTypeCacheEntryPoint(this);
-    }
-
-    void EntryPointInfo::UnregisterEquivalentTypeCaches()
-    {
-        if (this->registeredEquivalentTypeCacheRef != nullptr)
-        {
-            ScriptContext *scriptContext = GetScriptContext();
-            if (scriptContext != nullptr)
-            {
-                scriptContext->GetThreadContext()->UnregisterEquivalentTypeCacheEntryPoint(
-                    this->registeredEquivalentTypeCacheRef);
-            }
-            this->registeredEquivalentTypeCacheRef = nullptr;
+            this->GetNativeEntryPointData()->FreeJitTransferData();;
         }
     }
 
     bool EntryPointInfo::ClearEquivalentTypeCaches()
     {
-        Assert(this->equivalentTypeCaches != nullptr);
-        Assert(this->equivalentTypeCacheCount > 0);
-
-        bool isAnyCacheLive = false;
-        Recycler *recycler = GetScriptContext()->GetRecycler();
-        for (EquivalentTypeCache *cache = this->equivalentTypeCaches;
-             cache < this->equivalentTypeCaches + this->equivalentTypeCacheCount;
-             cache++)
-        {
-            bool isCacheLive = cache->ClearUnusedTypes(recycler);
-            if (isCacheLive)
-            {
-                isAnyCacheLive = true;
-            }
-        }
-
-        if (!isAnyCacheLive)
-        {
-            // The caller must take care of unregistering this entry point. We may be in the middle of
-            // walking the list of registered entry points.
-            this->equivalentTypeCaches = nullptr;
-            this->equivalentTypeCacheCount = 0;
-            this->registeredEquivalentTypeCacheRef = nullptr;
-        }
-
-        return isAnyCacheLive;
+        return this->GetNativeEntryPointData()->ClearEquivalentTypeCaches(GetScriptContext()->GetRecycler());
     }
 
     bool EquivalentTypeCache::ClearUnusedTypes(Recycler *recycler)
@@ -8773,14 +8857,37 @@ namespace Js
         Assert(this->guard);
         if (this->guard->IsValid())
         {
-            Type *type = reinterpret_cast<Type*>(this->guard->GetValue());
-            if (!recycler->IsObjectMarked(type))
+            if (this->guard->IsPoly())
             {
-                this->guard->InvalidateDuringSweep();
+                JitPolyEquivalentTypeGuard * polyGuard = this->guard->AsPolyTypeCheckGuard();
+                for (uint8 i = 0; i < polyGuard->GetSize(); i++)
+                {
+                    intptr_t value = polyGuard->GetPolyValue(i);
+                    if (value != PropertyGuard::GuardValue::Uninitialized && value != PropertyGuard::GuardValue::Invalidated_DuringSweep)
+                    {
+                        Type *type = reinterpret_cast<Type*>(value);
+                        if (!recycler->IsObjectMarked(type))
+                        {
+                            polyGuard->InvalidateDuringSweep(i);
+                        }
+                        else
+                        {
+                            isAnyTypeLive = true;
+                        }
+                    }
+                }
             }
             else
             {
-                isAnyTypeLive = true;
+                Type *type = reinterpret_cast<Type*>(this->guard->GetValue());
+                if (!recycler->IsObjectMarked(type))
+                {
+                    this->guard->InvalidateDuringSweep();
+                }
+                else
+                {
+                    isAnyTypeLive = true;
+                }
             }
         }
         uint16 nonNullIndex = 0;
@@ -8796,10 +8903,17 @@ namespace Js
                 if (recycler->IsObjectMarked(type))
                 {
                     // compact the types array by moving non-null types
-                    // at the beginning.
+                    // to the beginning.
                     this->types[nonNullIndex++] = type;
 #if DBG
-                    isGuardValuePresent = this->guard->GetValue() == reinterpret_cast<intptr_t>(type) ? true : isGuardValuePresent;
+                    if (guard->IsPoly())
+                    {
+                        isGuardValuePresent = true;
+                    }
+                    else if (this->guard->GetValue() == reinterpret_cast<intptr_t>(type))
+                    {
+                        isGuardValuePresent = true;
+                    }
 #endif
                 }
             }
@@ -8817,14 +8931,18 @@ namespace Js
         {
             isAnyTypeLive = true;
         }
-        else
+        else if (guard->IsPoly())
         {
-            if (guard->IsInvalidatedDuringSweep())
+            if (!isAnyTypeLive)
             {
-                // just mark this as actual invalidated since there are no types
-                // present
                 guard->Invalidate();
             }
+        }
+        else if (guard->IsInvalidatedDuringSweep())
+        {
+            // just mark this as actual invalidated since there are no types
+            // present
+            guard->Invalidate();
         }
 
         // verify if guard value is valid, it is present in one of the types
@@ -8832,20 +8950,9 @@ namespace Js
             "After ClearUnusedTypes, valid guard value should be one of the cached equivalent types.");
         return isAnyTypeLive;
     }
-
-    void EntryPointInfo::RegisterConstructorCache(Js::ConstructorCache* constructorCache, Recycler* recycler)
-    {
-        Assert(constructorCache != nullptr);
-
-        if (!this->constructorCaches)
-        {
-            this->constructorCaches = RecyclerNew(recycler, ConstructorCacheList, recycler);
-        }
-
-        this->constructorCaches->Prepend(constructorCache);
-    }
 #endif
 
+#if ENABLE_ENTRYPOINT_CLEANUP_TRACE
 #if ENABLE_DEBUG_STACK_BACK_TRACE
     void EntryPointInfo::CaptureCleanupStackTrace()
     {
@@ -8858,6 +8965,7 @@ namespace Js
         this->cleanupStack = StackBackTrace::Capture(&NoCheckHeapAllocator::Instance);
     }
 #endif
+#endif
 
     void EntryPointInfo::Finalize(bool isShutdown)
     {
@@ -8868,12 +8976,13 @@ namespace Js
             ReleasePendingWorkItem();
         }
 
-#if ENABLE_DEBUG_CONFIG_OPTIONS
+#if ENABLE_ENTRYPOINT_CLEANUP_TRACE
         this->SetCleanupReason(CleanupReason::CleanUpForFinalize);
 #endif
 
         this->Cleanup(isShutdown, false);
 
+#if ENABLE_ENTRYPOINT_CLEANUP_TRACE
 #if ENABLE_DEBUG_STACK_BACK_TRACE
         if (this->cleanupStack != nullptr)
         {
@@ -8881,103 +8990,31 @@ namespace Js
             this->cleanupStack = nullptr;
         }
 #endif
+#endif
 
         this->library = nullptr;
     }
-
-#if ENABLE_NATIVE_CODEGEN
-    EntryPointPolymorphicInlineCacheInfo * EntryPointInfo::EnsurePolymorphicInlineCacheInfo(Recycler * recycler, FunctionBody * functionBody)
-    {
-        if (!polymorphicInlineCacheInfo)
-        {
-            polymorphicInlineCacheInfo = RecyclerNew(recycler, EntryPointPolymorphicInlineCacheInfo, functionBody);
-        }
-        return polymorphicInlineCacheInfo;
-    }
-#endif
 
     void EntryPointInfo::Cleanup(bool isShutdown, bool captureCleanupStack)
     {
         if (this->GetState() != CleanedUp)
         {
 #if ENABLE_NATIVE_CODEGEN
-#if PDATA_ENABLED
-            if (this->xdataInfo != nullptr)
-            {
-#ifdef _WIN32
-                PHASE_PRINT_TESTTRACE1(Js::XDataPhase, _u("EntryPointInfo::Cleanup: Freeing: function table: %llx, codeAddress: %%llx\n"), this->xdataInfo->functionTable, this->GetNativeEntrypoint());
-                if (this->xdataInfo->functionTable
-                    && !DelayDeletingFunctionTable::AddEntry(this->xdataInfo->functionTable))
-                {
-                    PHASE_PRINT_TESTTRACE1(Js::XDataPhase, _u("EntryPointInfo::Cleanup: Failed to add to slist, table: %llx, address: %%llx\n"), this->xdataInfo->functionTable, this->GetNativeEntrypoint());
-                    DelayDeletingFunctionTable::DeleteFunctionTable(this->xdataInfo->functionTable);
-                }
-#endif
-                XDataAllocator::Unregister(this->xdataInfo);
-#if defined(_M_ARM)
-                if (JITManager::GetJITManager()->IsOOPJITEnabled())
-#endif
-                {
-                    HeapDelete(this->xdataInfo);
-                }
-                this->xdataInfo = nullptr;
-            }
-#endif //PDATA_ENABLED
-
             this->OnCleanup(isShutdown);
 
-            FreeJitTransferData();
-
-            if (this->bailoutRecordMap != nullptr)
+            if (this->nativeEntryPointData)
             {
-                HeapDelete(this->bailoutRecordMap);
-                bailoutRecordMap = nullptr;
+                this->nativeEntryPointData->Cleanup(GetScriptContext(), isShutdown, false);
+                this->nativeEntryPointData = nullptr;
             }
-
-            if (this->sharedPropertyGuards != nullptr)
-            {
-                sharedPropertyGuards->Clear();
-                sharedPropertyGuards = nullptr;
-            }
-
-            FreePropertyGuards();
-
-            if (this->equivalentTypeCaches != nullptr)
-            {
-                this->UnregisterEquivalentTypeCaches();
-                this->equivalentTypeCacheCount = 0;
-                this->equivalentTypeCaches = nullptr;
-            }
-
-            if (this->constructorCaches != nullptr)
-            {
-                this->constructorCaches->Clear();
-            }
-#endif
+#endif // ENABLE_NATIVE_CODEGEN
 
             // This is how we set the CleanedUp state
             this->workItem = nullptr;
-            this->nativeAddress = nullptr;
-#if ENABLE_NATIVE_CODEGEN
-            this->weakFuncRefSet = nullptr;
-            this->runtimeTypeRefs = nullptr;
-#endif
-            this->codeSize = -1;
             this->library = nullptr;
 
-#if ENABLE_NATIVE_CODEGEN
-            DeleteNativeCodeData(this->inProcJITNaticeCodedata);
-            this->inProcJITNaticeCodedata = nullptr;
-            this->numberChunks = nullptr;
-
-            if (this->nativeDataBuffer)
-            {
-                NativeDataBuffer* buffer = (NativeDataBuffer*)(this->nativeDataBuffer - offsetof(NativeDataBuffer, data));
-                midl_user_free(buffer);
-            }
-#endif
-
             this->state = CleanedUp;
+#if ENABLE_ENTRYPOINT_CLEANUP_TRACE
 #if ENABLE_DEBUG_CONFIG_OPTIONS
 #if !DBG
             captureCleanupStack = captureCleanupStack && Js::Configuration::Global.flags.FreTestDiagMode;
@@ -8989,19 +9026,6 @@ namespace Js
             }
 #endif
 #endif
-
-#if ENABLE_NATIVE_CODEGEN
-            if (nullptr != this->nativeThrowSpanSequence)
-            {
-                HeapDelete(this->nativeThrowSpanSequence);
-                this->nativeThrowSpanSequence = nullptr;
-            }
-
-            this->polymorphicInlineCacheInfo = nullptr;
-#endif
-
-#if DBG_DUMP | defined(VTUNE_PROFILING)
-            this->nativeOffsetMaps.Reset();
 #endif
 #if DEBUG
             const unsigned char* rpcData = serializedRpcData;
@@ -9015,25 +9039,12 @@ namespace Js
     void EntryPointInfo::Reset(bool resetStateToNotScheduled)
     {
         Assert(this->GetState() != CleanedUp);
-        this->nativeAddress = nullptr;
         this->workItem = nullptr;
 #if ENABLE_NATIVE_CODEGEN
-        if (nullptr != this->nativeThrowSpanSequence)
+        if (this->nativeEntryPointData)
         {
-            HeapDelete(this->nativeThrowSpanSequence);
-            this->nativeThrowSpanSequence = nullptr;
-        }
-#endif
-        this->codeSize = 0;
-#if ENABLE_NATIVE_CODEGEN
-        this->weakFuncRefSet = nullptr;
-        this->sharedPropertyGuards = nullptr;
-        FreePropertyGuards();
-        FreeJitTransferData();
-        if (this->inProcJITNaticeCodedata != nullptr)
-        {
-            DeleteNativeCodeData(this->inProcJITNaticeCodedata);
-            this->inProcJITNaticeCodedata = nullptr;
+            this->nativeEntryPointData->Cleanup(GetScriptContext(), false, true);
+            this->nativeEntryPointData = nullptr;
         }
 #endif
         // Set the state to NotScheduled only if the call to Reset is not because of JIT cap being reached
@@ -9052,25 +9063,38 @@ namespace Js
 
         // Reset the entry point upon a lazy bailout.
         this->Reset(true);
-        Assert(this->nativeAddress != nullptr);
-
-#if PDATA_ENABLED && defined(_WIN32)
-        if (this->xdataInfo)
-        {
-            if (this->xdataInfo->functionTable
-                && !DelayDeletingFunctionTable::AddEntry(this->xdataInfo->functionTable))
-            {
-                PHASE_PRINT_TESTTRACE1(Js::XDataPhase, _u("EntryPointInfo::ResetOnLazyBailoutFailure: Failed to add to slist, table: %llx, address: %llx\n"), this->xdataInfo->functionTable, this->nativeAddress);
-                DelayDeletingFunctionTable::DeleteFunctionTable(this->xdataInfo->functionTable);
-            }
-        }
-#endif
-        FreeNativeCodeGenAllocation(GetScriptContext(), this->nativeAddress, this->thunkAddress);
-
-        this->nativeAddress = nullptr;
         this->jsMethod = nullptr;
     }
 #endif
+
+#ifdef ASMJS_PLAT
+    void EntryPointInfo::SetIsTJMode(bool value)
+    {
+        Assert(this->GetIsAsmJSFunction());
+        mIsTemplatizedJitMode = value;
+    }
+
+    bool EntryPointInfo::GetIsTJMode()const
+    {
+        return mIsTemplatizedJitMode;
+    };
+
+    // set code size, used by TJ to set the code size
+    void EntryPointInfo::SetTJCodeSize(ptrdiff_t size)
+    {
+        Assert(isAsmJsFunction);
+        // TODO: We don't need the whole NativeEntryPointData to just hold just the code and size for TJ mode
+        this->EnsureNativeEntryPointData()->SetTJCodeSize(size);
+    }
+
+    void EntryPointInfo::SetTJNativeAddress(Js::JavascriptMethod address, void * validationCookie)
+    {
+        Assert(isAsmJsFunction);
+        // TODO: We don't need the whole NativeEntryPointData to just hold just the code and size for TJ mode
+        this->EnsureNativeEntryPointData()->SetTJNativeAddress(address, validationCookie);
+    }
+#endif
+    //End AsmJS Support
 
 #ifdef PERF_COUNTERS
     void FunctionEntryPointInfo::OnRecorded()
@@ -9081,31 +9105,17 @@ namespace Js
     }
 #endif
 
-    FunctionEntryPointInfo::FunctionEntryPointInfo(FunctionProxy * functionProxy, Js::JavascriptMethod method, ThreadContext* context, void* cookie) :
-        EntryPointInfo(method, functionProxy->GetScriptContext()->GetLibrary(), cookie, context),
+    FunctionEntryPointInfo::FunctionEntryPointInfo(FunctionProxy * functionProxy, Js::JavascriptMethod method, ThreadContext* context) :
+        EntryPointInfo(method, functionProxy->GetScriptContext()->GetLibrary(), context),
         localVarSlotsOffset(Js::Constants::InvalidOffset),
         localVarChangedOffset(Js::Constants::InvalidOffset),
         callsCount(0),
         jitMode(ExecutionMode::Interpreter),
         functionProxy(functionProxy),
-        nextEntryPoint(nullptr),
-        mIsTemplatizedJitMode(false)
+        nextEntryPoint(nullptr)
     {
     }
 
-#ifdef ASMJS_PLAT
-    void FunctionEntryPointInfo::SetIsTJMode(bool value)
-    {
-        Assert(this->GetIsAsmJSFunction());
-        mIsTemplatizedJitMode = value;
-    }
-
-    bool FunctionEntryPointInfo::GetIsTJMode()const
-    {
-        return mIsTemplatizedJitMode;
-    };
-#endif
-    //End AsmJS Support
 
 #if ENABLE_NATIVE_CODEGEN
     ExecutionMode FunctionEntryPointInfo::GetJitMode() const
@@ -9153,7 +9163,7 @@ namespace Js
 #if ENABLE_NATIVE_CODEGEN
                 TryReleaseNonHiPriWorkItem(this->library->GetScriptContext(), workItem);
 #endif
-                }
+            }
         }
     }
 
@@ -9162,24 +9172,35 @@ namespace Js
         return functionProxy->GetFunctionBody();
     }
 
+#if ENABLE_NATIVE_CODEGEN
+    void EntryPointInfo::CleanupNativeCode(ScriptContext * scriptContext)
+    {
+        if (this->jsMethod == this->GetNativeEntrypoint())
+        {
+#if DBG
+            // tag the jsMethod in case the native address is reused in recycler and create a false positive
+            // not checking validationCookie because this can happen while debugger attaching, native address
+            // are batch freed through deleting NativeCodeGenerator
+            this->jsMethod = (Js::JavascriptMethod)((intptr_t)this->jsMethod | 1);
+#else
+            this->jsMethod = nullptr;
+#endif
+        }
+    }
+#endif
+
     void FunctionEntryPointInfo::OnCleanup(bool isShutdown)
     {
         if (this->IsCodeGenDone())
         {
             Assert(this->functionProxy->GetFunctionInfo()->HasBody());
+
 #if ENABLE_NATIVE_CODEGEN
-            if (nullptr != this->inlineeFrameMap)
-            {
-                HeapDelete(this->inlineeFrameMap);
-                this->inlineeFrameMap = nullptr;
-            }
-
-#endif
-
-            if(nativeEntryPointProcessed)
+            if (this->IsNativeEntryPointProcessed())
             {
                 JS_ETW(EtwTrace::LogMethodNativeUnloadEvent(this->functionProxy->GetFunctionBody(), this));
             }
+#endif
 
             FunctionBody* functionBody = this->functionProxy->GetFunctionBody();
 #ifdef ASMJS_PLAT
@@ -9193,45 +9214,8 @@ namespace Js
             {
                 functionBody->SetSimpleJitEntryPointInfo(nullptr);
             }
-            // If we're shutting down, the script context might be gone
-            if (!isShutdown)
-            {
-                ScriptContext* scriptContext = this->functionProxy->GetScriptContext();
-
-                void* currentCookie = nullptr;
-
 #if ENABLE_NATIVE_CODEGEN
-                // In the debugger case, we might call cleanup after the native code gen that
-                // allocated this entry point has already shutdown. In that case, the validation
-                // check below should fail and we should not try to free this entry point
-                // since it's already been freed
-                NativeCodeGenerator* currentNativeCodegen = scriptContext->GetNativeCodeGenerator();
-                Assert(this->validationCookie != nullptr);
-                currentCookie = (void*)currentNativeCodegen;
-#endif
-
-                if (this->jsMethod == this->GetNativeEntrypoint())
-                {
-#if DBG
-                    // tag the jsMethod in case the native address is reused in recycler and create a false positive
-                    // not checking validationCookie because this can happen while debugger attaching, native address
-                    // are batch freed through deleting NativeCodeGenerator
-                    this->jsMethod = (Js::JavascriptMethod)((intptr_t)this->jsMethod | 1);
-#else
-                    this->jsMethod = nullptr;
-#endif
-                }
-
-                if (validationCookie == currentCookie)
-                {
-                    scriptContext->FreeFunctionEntryPoint((Js::JavascriptMethod)this->GetNativeAddress(), this->GetThunkAddress());
-                }
-            }
-
-#ifdef PERF_COUNTERS
-            PERF_COUNTER_SUB(Code, TotalNativeCodeSize, GetCodeSize());
-            PERF_COUNTER_SUB(Code, FunctionNativeCodeSize, GetCodeSize());
-            PERF_COUNTER_SUB(Code, DynamicNativeCodeSize, GetCodeSize());
+            CleanupNativeCode(this->functionProxy->GetScriptContext());
 #endif
         }
 
@@ -9280,6 +9264,7 @@ namespace Js
         // We may have got here following OOM in ProcessJitTransferData. Free any data we have
         // to reduce the chance of another OOM below.
         this->FreeJitTransferData();
+
         FunctionEntryPointInfo* entryPoint = functionBody->GetDefaultFunctionEntryPointInfo();
         if (entryPoint->IsCodeGenPending())
         {
@@ -9333,7 +9318,7 @@ namespace Js
 
     void FunctionEntryPointInfo::Expire()
     {
-        if (this->lastCallsCount != this->callsCount || !this->nativeEntryPointProcessed || this->IsCleanedUp())
+        if (this->lastCallsCount != this->callsCount || !this->IsNativeEntryPointProcessed() || this->IsCleanedUp())
         {
             return;
         }
@@ -9496,50 +9481,7 @@ namespace Js
                 this->loopHeader->functionBody->GetLoopNumber(this->loopHeader)));
 
 #if ENABLE_NATIVE_CODEGEN
-            if (nullptr != this->inlineeFrameMap)
-            {
-                HeapDelete(this->inlineeFrameMap);
-                this->inlineeFrameMap = nullptr;
-            }
-#endif
-
-            if (!isShutdown)
-            {
-                void* currentCookie = nullptr;
-                ScriptContext* scriptContext = this->loopHeader->functionBody->GetScriptContext();
-
-#if ENABLE_NATIVE_CODEGEN
-                // In the debugger case, we might call cleanup after the native code gen that
-                // allocated this entry point has already shutdown. In that case, the validation
-                // check below should fail and we should not try to free this entry point
-                // since it's already been freed
-                NativeCodeGenerator* currentNativeCodegen = scriptContext->GetNativeCodeGenerator();
-                Assert(this->validationCookie != nullptr);
-                currentCookie = (void*)currentNativeCodegen;
-#endif
-
-                if (this->jsMethod == this->GetNativeEntrypoint())
-                {
-#if DBG
-                    // tag the jsMethod in case the native address is reused in recycler and create a false positive
-                    // not checking validationCookie because this can happen while debugger attaching, native address
-                    // are batch freed through deleting NativeCodeGenerator
-                    this->jsMethod = (Js::JavascriptMethod)((intptr_t)this->jsMethod | 1);
-#else
-                    this->jsMethod = nullptr;
-#endif
-                }
-
-                if (validationCookie == currentCookie)
-                {
-                    scriptContext->FreeFunctionEntryPoint(reinterpret_cast<Js::JavascriptMethod>(this->GetNativeAddress()), this->GetThunkAddress());
-                }
-            }
-
-#ifdef PERF_COUNTERS
-            PERF_COUNTER_SUB(Code, TotalNativeCodeSize, GetCodeSize());
-            PERF_COUNTER_SUB(Code, LoopNativeCodeSize, GetCodeSize());
-            PERF_COUNTER_SUB(Code, DynamicNativeCodeSize, GetCodeSize());
+            this->CleanupNativeCode(this->loopHeader->functionBody->GetScriptContext());
 #endif
         }
     }
@@ -9574,7 +9516,7 @@ namespace Js
     {
         ScriptContext* scriptContext = this->functionBody->GetScriptContext();
         Recycler* recycler = scriptContext->GetRecycler();
-        LoopEntryPointInfo* entryPoint = RecyclerNew(recycler, LoopEntryPointInfo, this, scriptContext->GetLibrary(), scriptContext->GetNativeCodeGenerator());
+        LoopEntryPointInfo* entryPoint = RecyclerNew(recycler, LoopEntryPointInfo, this, scriptContext->GetLibrary());
         return this->entryPoints->Add(entryPoint);
     }
 
@@ -9854,4 +9796,17 @@ namespace Js
     {
         return m_hasFirstTmpRegister ? this->GetCountField(CounterFields::FirstTmpRegister) : Constants::NoRegister;
     }
+
+#if DBG && defined(ENABLE_SCRIPT_DEBUGGING)
+    Js::DebuggerMode FunctionBody::GetDebuggerMode()
+    {
+        return this->GetScriptContext()->GetDebugContext()->GetDebuggerMode();
+    }
+#endif
 }
+
+#if !DBG
+// Don't grow these data structure unless absolutely necessary
+CompileAssert(sizeof(Js::EntryPointInfo) <= 56);
+CompileAssert(sizeof(Js::FunctionEntryPointInfo) <= 96);
+#endif

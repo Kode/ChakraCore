@@ -48,14 +48,18 @@ var tests = [
         "use strict";
         var obj0 = {
             m() {
+                assert.areEqual(this, obj0);
+                assert.areEqual(this.__proto__, base, "this.__proto__ === base");
                 super.prop = "identifier";
-                Object.freeze(obj0);
+                assert.isTrue(this.hasOwnProperty('prop'), "this.hasOwnProperty('prop')");
+                Object.freeze(this);
                 super.prop = "super";
             }
         };
 
         var obj1 = {
             m() {
+                assert.areEqual(this, obj1);
                 super['prop'] = "expression";
                 Object.freeze(obj1);
                 super['prop'] = "super";
@@ -71,6 +75,30 @@ var tests = [
         assert.areEqual("expression", obj1.prop);
     }
   },
+    {
+        name: "super bound through call",
+        body: function () {
+            var obj = {
+                m() {
+                    super.x = 17;
+                },
+                n() {
+                    'use strict';
+                    super.x = 19;
+                }
+            };
+
+            var bar = { x: 11 };
+            obj.m.call(bar);
+            assert.areEqual(17, bar.x);
+
+            obj.n.call(bar);
+            assert.areEqual(19, bar.x);
+
+            obj.m.call(42); // noop in non-strict mode
+            assert.throws(() => obj.n.call(42), TypeError, "super bound to number", "Assignment to read-only properties is not allowed in strict mode");
+        }
+    },
   {
     name: "super in strict mode - class",
     body: function () {

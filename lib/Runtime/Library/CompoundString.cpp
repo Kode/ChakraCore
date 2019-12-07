@@ -6,8 +6,8 @@
 #include "RuntimeLibraryPch.h"
 
 
-namespace Js
-{
+using namespace Js;
+
     #pragma region CompoundString::Block
     #ifndef IsJsDiag
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -383,7 +383,7 @@ namespace Js
         {
             AllocateBuffer(charCapacity, recycler);
             charLength = usedCharLength;
-            
+
             ArrayWriteBarrierVerifyBits(Block::Pointers(Chars()), Block::PointerLengthFromCharLength(charCapacity));
             js_wmemcpy_s(Chars(), charCapacity, (const char16*)(buffer), usedCharLength);
             // SWB: buffer may contain chars or pointers. Trigger write barrier for the whole buffer.
@@ -583,52 +583,31 @@ namespace Js
 
     CompoundString * CompoundString::JitClone(CompoundString * cs)
     {
-        Assert(Is(cs));
+        JIT_HELPER_NOT_REENTRANT_NOLOCK_HEADER(Op_CompoundStringCloneForConcat);
+        Assert(VarIsCorrectType(cs));
         return cs->Clone(false);
+        JIT_HELPER_END(Op_CompoundStringCloneForConcat);
     }
 
     CompoundString * CompoundString::JitCloneForAppending(CompoundString * cs)
     {
-        Assert(Is(cs));
+        JIT_HELPER_NOT_REENTRANT_NOLOCK_HEADER(Op_CompoundStringCloneForAppending);
+        Assert(VarIsCorrectType(cs));
         return cs->Clone(true);
+        JIT_HELPER_END(Op_CompoundStringCloneForAppending);
     }
 
-    bool CompoundString::Is(RecyclableObject *const object)
+    template <> bool Js::VarIsImpl<CompoundString>(RecyclableObject * object)
     {
-        return VirtualTableInfo<CompoundString>::HasVirtualTable(object);
-    }
-
-    bool CompoundString::Is(const Var var)
-    {
-        return RecyclableObject::Is(var) && Is(RecyclableObject::FromVar(var));
-    }
-
-    CompoundString *CompoundString::FromVar(RecyclableObject *const object)
-    {
-        AssertOrFailFast(Is(object));
-
-        CompoundString *const cs = static_cast<CompoundString *>(object);
-        Assert(!cs->IsFinalized());
-        return cs;
-    }
-
-    CompoundString *CompoundString::UnsafeFromVar(RecyclableObject *const object)
-    {
-        Assert(Is(object));
-
-        CompoundString *const cs = static_cast<CompoundString *>(object);
-        Assert(!cs->IsFinalized());
-        return cs;
-    }
-
-    CompoundString *CompoundString::FromVar(const Var var)
-    {
-        return FromVar(RecyclableObject::FromVar(var));
-    }
-
-    CompoundString *CompoundString::UnsafeFromVar(const Var var)
-    {
-        return UnsafeFromVar(RecyclableObject::UnsafeFromVar(var));
+        bool result = VirtualTableInfo<CompoundString>::HasVirtualTable(object);
+#if DBG
+        if (result)
+        {
+            CompoundString *const cs = static_cast<CompoundString *>(object);
+            Assert(!cs->IsFinalized());
+        }
+#endif
+        return result;
     }
 
     JavascriptString *CompoundString::GetImmutableOrScriptUnreferencedString(JavascriptString *const s)
@@ -640,7 +619,7 @@ namespace Js
         // another CompoundString, for instance). If the provided string is a CompoundString, it must not be mutated by script
         // code after the concatenation operation. In that case, clone the string to ensure that it is not referenced by script
         // code. If the clone is never handed back to script code, it effectively behaves as an immutable string.
-        return Is(s) ? UnsafeFromVar(s)->Clone(false) : s;
+        return VarIs<CompoundString>(s) ? UnsafeVarTo<CompoundString>(s)->Clone(false) : s;
     }
 
     bool CompoundString::ShouldAppendChars(const CharCount appendCharLength)
@@ -677,7 +656,7 @@ namespace Js
 
         // A compound string cannot flatten itself while appending itself to itself since flattening would make the append
         // illegal. Clone the string being appended if necessary, before flattening.
-        return s == this ? FromVar(s)->Clone(false)->GetSz() : s->GetString();
+        return s == this ? VarTo<CompoundString>(s)->Clone(false)->GetSz() : s->GetString();
     }
 
     char16 *CompoundString::LastBlockChars() const
@@ -1120,12 +1099,12 @@ namespace Js
                 if(IsPackedInfo(pointer2))
                 {
                     Assert(pointerIndex != 0);
-                    s = JavascriptString::FromVar(blockPointers[--pointerIndex]);
+                    s = VarTo<JavascriptString>(blockPointers[--pointerIndex]);
                 }
                 else
     #endif
                 {
-                    s = JavascriptString::FromVar(pointer2);
+                    s = VarTo<JavascriptString>(pointer2);
                     pointer2 = nullptr;
                 }
 
@@ -1140,7 +1119,7 @@ namespace Js
             }
             else
             {
-                JavascriptString *const s = JavascriptString::FromVar(pointer);
+                JavascriptString *const s = VarTo<JavascriptString>(pointer);
                 const CharCount copyCharLength = s->GetLength();
 
                 Assert(remainingCharLengthToCopy >= copyCharLength);
@@ -1250,4 +1229,3 @@ namespace Js
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     #endif
     #pragma endregion
-}

@@ -6,6 +6,11 @@
 
 namespace Js
 {
+    // Upon construction, LiteralStringWithPropertyStringPtr is guaranteed to point to a recycler-allocated
+    // buffer, so it passes the LiteralString assertions. However, upon receiving a property record pointer,
+    // this object will update to point to the copy of its data in that property record, meaning that using
+    // this class is just like using PropertyString: you can't take a reference to the underlying buffer via
+    // GetSz or GetString, drop the reference to the owning string, and expect the buffer to stay alive.
     class LiteralStringWithPropertyStringPtr : public LiteralString
     {
     private:
@@ -14,6 +19,12 @@ namespace Js
 
     public:
         virtual void GetPropertyRecord(_Out_ PropertyRecord const** propRecord, bool dontLookupFromDictionary = false) override;
+        void GetPropertyRecordImpl(_Out_ PropertyRecord const** propRecord, bool dontLookupFromDictionary = false);
+        virtual void CachePropertyRecord(_In_ PropertyRecord const* propertyRecord) override;
+        void CachePropertyRecordImpl(_In_ PropertyRecord const* propertyRecord);
+        virtual void const * GetOriginalStringReference() override;
+
+        virtual RecyclableObject* CloneToScriptContext(ScriptContext* requestContext) override;
 
         bool HasPropertyRecord() const { return propertyRecord != nullptr; }
 
@@ -24,9 +35,6 @@ namespace Js
         template <typename StringType> static LiteralStringWithPropertyStringPtr * ConvertString(StringType * originalString);
 
         static uint GetOffsetOfPropertyString() { return offsetof(LiteralStringWithPropertyStringPtr, propertyString); }
-        static bool Is(Var var);
-        static bool Is(RecyclableObject* var);
-        template <typename T> static LiteralStringWithPropertyStringPtr* TryFromVar(T var);
 
         static JavascriptString *
         NewFromCString(const char * cString, const CharCount charCount, JavascriptLibrary *const library);
@@ -49,17 +57,7 @@ namespace Js
         }
     };
 
-    // Templated so that the Is call dispatchs to different function depending
-    // on if argument is already a RecyclableObject* or only known to be a Var
-    //
-    // In case it is known to be a RecyclableObject*, the Is call skips that check
-    template <typename T>
-    inline LiteralStringWithPropertyStringPtr * LiteralStringWithPropertyStringPtr::TryFromVar(T var)
-    {
-        return LiteralStringWithPropertyStringPtr::Is(var)
-            ? reinterpret_cast<LiteralStringWithPropertyStringPtr*>(var)
-            : nullptr;
-    }
+    template <> bool VarIsImpl<LiteralStringWithPropertyStringPtr>(RecyclableObject * obj);
 
     // Base class for concat strings.
     // Concat string is a virtual string, or a non-leaf node in concat string tree.
@@ -71,7 +69,7 @@ namespace Js
     // Usage pattern:
     //   // Create concat tree using one of non-abstract derived classes.
     //   JavascriptString* result = concatTree->GetString();    // At this time we flatten the tree into 1 actual wchat_t* string.
-    class ConcatStringBase _ABSTRACT : public LiteralString // vtable will be switched to LiteralString's vtable after flattening
+    class ConcatStringBase : public LiteralString // vtable will be switched to LiteralString's vtable after flattening
     {
         friend JavascriptString;
 
@@ -268,9 +266,6 @@ namespace Js
     public:
         static ConcatStringMulti * New(uint slotCount, JavascriptString * a1, JavascriptString * a2, ScriptContext* scriptContext);
         const char16 * GetSz() override sealed;
-        static bool Is(Var var);
-        static ConcatStringMulti * FromVar(Var value);
-        static ConcatStringMulti * UnsafeFromVar(Var value);
         static size_t GetAllocSize(uint slotCount);
         void SetItem(_In_range_(0, slotCount - 1) uint index, JavascriptString* value);
 
@@ -293,4 +288,6 @@ namespace Js
             return VTableValue::VtableConcatStringMulti;
         }
     };
+
+    template <> bool VarIsImpl<ConcatStringMulti>(RecyclableObject* obj);
 }

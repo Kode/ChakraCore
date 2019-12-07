@@ -23,7 +23,7 @@ namespace TTD
 
             if(replayVar != nullptr && TTD::JsSupport::IsVarPtrValued(replayVar))
             {
-                Js::RecyclableObject* obj = Js::RecyclableObject::FromVar(replayVar);
+                Js::RecyclableObject* obj = Js::VarTo<Js::RecyclableObject>(replayVar);
                 executeContext->AddLocalRoot(TTD_CONVERT_OBJ_TO_LOG_PTR_ID(origVar), obj);
             }
         }
@@ -433,7 +433,7 @@ namespace TTD
             ExternalCallEventLogEntry* callEvt = GetInlineEventDataAs<ExternalCallEventLogEntry, EventKind::ExternalCallTag>(evt);
 
             Js::JavascriptString* displayName = function->GetDisplayName();
-            alloc.CopyStringIntoWLength(displayName->GetSz(), displayName->GetLength(), callEvt->FunctionName);
+            alloc.CopyStringIntoWLength(displayName->GetString(), displayName->GetLength(), callEvt->FunctionName);
         }
 #endif
 
@@ -596,6 +596,20 @@ namespace TTD
 
             ilevt->Line = reader->ReadUInt32(NSTokens::Key::line, true);
             ilevt->Column = reader->ReadUInt32(NSTokens::Key::column, true);
+        }
+
+        void TTDFetchAutoTraceStatusEventLogEntry_Emit(const EventLogEntry* evt, FileWriter* writer, ThreadContext* threadContext)
+        {
+            const TTDFetchAutoTraceStatusEventLogEntry* atfevt = GetInlineEventDataAs<TTDFetchAutoTraceStatusEventLogEntry, EventKind::TTDFetchAutoTraceStatusTag>(evt);
+
+            writer->WriteLogTag(NSTokens::Key::boolVal, atfevt->IsEnabled, NSTokens::Separator::CommaSeparator);
+        }
+
+        void TTDFetchAutoTraceStatusEventLogEntry_Parse(EventLogEntry* evt, ThreadContext* threadContext, FileReader* reader, UnlinkableSlabAllocator& alloc)
+        {
+            TTDFetchAutoTraceStatusEventLogEntry* atfevt = GetInlineEventDataAs<TTDFetchAutoTraceStatusEventLogEntry, EventKind::TTDFetchAutoTraceStatusTag>(evt);
+
+            atfevt->IsEnabled = reader->ReadLogTag(NSTokens::Key::boolVal, true);
         }
     }
 }

@@ -6,11 +6,16 @@
 :: add_msbuild_path.cmd
 ::
 :: Locate msbuild.exe and add it to the PATH
-set USE_MSBUILD_12=%1
+@echo off
+set FORCE_MSBUILD_VERSION=%1
 
-if "%USE_MSBUILD_12%" == "True" (
-    echo Skipping Dev15 and trying Dev12...
-    goto :LABEL_USE_MSBUILD_12
+if "%FORCE_MSBUILD_VERSION%" == "msbuild14" (
+    echo Skipping Dev16 and trying Dev14...
+    goto :LABEL_USE_MSBUILD_14
+)
+if "%FORCE_MSBUILD_VERSION%" == "msbuild15" (
+    echo Skipping Dev16 and trying Dev15...
+    goto :LABEL_USE_MSBUILD_15
 )
 
 where /q msbuild.exe
@@ -18,10 +23,34 @@ if "%ERRORLEVEL%" == "0" (
     goto :SkipMsBuildSetup
 )
 
-REM Try Dev15 first
+REM Try Dev16 first
 
+echo Trying to locate Dev16...
+
+:LABEL_USE_MSBUILD_16
+set MSBUILD_VERSION=16.0
+set "MSBUILD_PATH=%ProgramFiles(x86)%\Microsoft Visual Studio\Preview\Enterprise\MSBuild\%MSBUILD_VERSION%\Bin"
+
+if not exist "%MSBUILD_PATH%\msbuild.exe" (
+    set "MSBUILD_PATH=%ProgramFiles%\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\x86"
+)
+
+if not exist "%MSBUILD_PATH%\msbuild.exe" (
+    set "MSBUILD_PATH=%ProgramFiles(x86)%\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin"
+)
+
+if not exist "%MSBUILD_PATH%\msbuild.exe" (
+    set "MSBUILD_PATH=%ProgramFiles(x86)%\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\amd64"
+)
+
+if exist "%MSBUILD_PATH%\msbuild.exe" (
+    goto :MSBuildFound
+)
+
+echo Dev16 not found, trying to locate Dev15...
+
+:LABEL_USE_MSBUILD_15
 set MSBUILD_VERSION=15.0
-
 set "MSBUILD_PATH=%ProgramFiles(x86)%\Microsoft Visual Studio\Preview\Enterprise\MSBuild\15.0\Bin"
 
 if not exist "%MSBUILD_PATH%\msbuild.exe" (
@@ -40,8 +69,9 @@ if exist "%MSBUILD_PATH%\msbuild.exe" (
     goto :MSBuildFound
 )
 
-echo Dev15 not found, trying Dev14...
+echo Dev15 not found, trying to locate Dev14...
 
+:LABEL_USE_MSBUILD_14
 set MSBUILD_VERSION=14.0
 set "MSBUILD_PATH=%ProgramFiles%\msbuild\%MSBUILD_VERSION%\Bin\x86"
 
@@ -57,7 +87,7 @@ if exist "%MSBUILD_PATH%\msbuild.exe" (
     goto :MSBuildFound
 )
 
-echo Dev14 not found, trying Dev12...
+echo Dev14 not found, trying to locate Dev12...
 
 :LABEL_USE_MSBUILD_12
 set MSBUILD_VERSION=12.0

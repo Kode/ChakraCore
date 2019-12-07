@@ -73,6 +73,13 @@
     )
   )
 
+  (func (export "loop6") (result i32)
+    (loop (result i32)
+      (br_if 0 (i32.const 0))
+      (i32.const 3)
+    )
+  )
+
   (func (export "if") (result i32)
     (local $i i32)
     (set_local $i (i32.const 0))
@@ -220,16 +227,23 @@
           (i32.const 1)
         )
       )
-      (i32.const 1)
+      (i32.const 0)
     )
   )
 
   (func (export "br_if2") (result i32)
     (block $l0 (result i32)
       (if (i32.const 1)
-        (then (br $l0 (block $l1 (result i32) (br $l1 (i32.const 1)))))
+        (then
+          (drop
+            (br_if $l0
+              (block $l1 (result i32) (br $l1 (i32.const 1)))
+              (i32.const 1)
+            )
+          )
+        )
       )
-      (i32.const 1)
+      (i32.const 0)
     )
   )
 
@@ -280,6 +294,7 @@
 (assert_return (invoke "loop3") (i32.const 1))
 (assert_return (invoke "loop4" (i32.const 8)) (i32.const 16))
 (assert_return (invoke "loop5") (i32.const 2))
+(assert_return (invoke "loop6") (i32.const 3))
 (assert_return (invoke "if") (i32.const 5))
 (assert_return (invoke "if2") (i32.const 5))
 (assert_return (invoke "switch" (i32.const 0)) (i32.const 50))

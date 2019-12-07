@@ -11,6 +11,7 @@ namespace Js
         typedef JsUtil::LeafValueDictionary<Js::LocalFunctionId, Js::FunctionBody*>::Type FunctionBodyDictionary;
         typedef JsUtil::LeafValueDictionary<Js::LocalFunctionId, Js::ParseableFunctionInfo*>::Type DeferredFunctionsDictionary;
         typedef JsUtil::List<Js::FunctionInfo *, Recycler> FunctionInfoList;
+        typedef JsUtil::BaseHashSet<Js::PropertyRecord const *, Recycler>  BoundedPropertyRecordHashSet;
 
         friend class RemoteUtf8SourceInfo;
         friend class ScriptContext;
@@ -147,14 +148,6 @@ namespace Js
         }
 #endif
 
-        void ClearFunctions()
-        {
-            if (this->functionBodyDictionary)
-            {
-                this->functionBodyDictionary->Clear();
-            }
-        }
-
         bool HasFunctions() const
         {
             return (this->functionBodyDictionary ? this->functionBodyDictionary->Count() > 0 : false);
@@ -215,8 +208,6 @@ namespace Js
 
             return matchedFunctionBody;
         }
-
-        void SetHostBuffer(BYTE * pcszCode);
 
 #ifdef ENABLE_SCRIPT_DEBUGGING
         bool HasDebugDocument() const
@@ -298,7 +289,6 @@ namespace Js
         static Utf8SourceInfo* NewWithNoCopy(ScriptContext* scriptContext,
             LPCUTF8 utf8String, int32 length, size_t numBytes,
             SRCINFO const* srcInfo, bool isLibraryCode, Js::Var scriptSource = nullptr);
-        static Utf8SourceInfo* Clone(ScriptContext* scriptContext, const Utf8SourceInfo* sourceinfo);
 
         ScriptContext * GetScriptContext() const
         {
@@ -367,6 +357,7 @@ namespace Js
         void SetCallerUtf8SourceInfo(Utf8SourceInfo* callerUtf8SourceInfo);
         Utf8SourceInfo* GetCallerUtf8SourceInfo() const;
 
+        BoundedPropertyRecordHashSet * GetBoundedPropertyRecordHashSet() { return &this->boundedPropertyRecordHashSet; }
 #ifdef NTBUILD
         bool GetDebugDocumentName(BSTR * sourceName);
 #endif
@@ -375,11 +366,10 @@ namespace Js
         Field(charcount_t) m_cchLength;               // The number of characters encoded in m_utf8Source.
         Field(ISourceHolder*) sourceHolder;
 
-        FieldNoBarrier(BYTE*) m_pHostBuffer;  // Pointer to a host source buffer (null unless this is host code that we need to free)
-
         Field(FunctionBodyDictionary*) functionBodyDictionary;
         Field(DeferredFunctionsDictionary*) m_deferredFunctionsDictionary;
         Field(FunctionInfoList*) topLevelFunctionInfoList;
+        Field(BoundedPropertyRecordHashSet) boundedPropertyRecordHashSet;
 
 #ifdef ENABLE_SCRIPT_DEBUGGING
         Field(DebugDocument*) m_debugDocument;
@@ -402,7 +392,6 @@ namespace Js
 
         Field(bool) m_deferredFunctionsInitialized : 1;
         Field(bool) m_isCesu8 : 1;
-        Field(bool) m_hasHostBuffer : 1;
         Field(bool) m_isLibraryCode : 1;           // true, the current source belongs to the internal library code. Used for debug purpose to not show in debugger
         Field(bool) m_isXDomain : 1;
         // we found that m_isXDomain could cause regression without CORS, so the new flag is just for callee.caller in window.onerror

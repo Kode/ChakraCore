@@ -4,6 +4,7 @@
 //-------------------------------------------------------------------------------------------------------
 
 #include "Backend.h"
+#include "Core/CRC.h"
 
 #include "X86Encode.h"
 
@@ -104,7 +105,7 @@ EncoderMD::Init(Encoder *encoder)
 ///
 ///----------------------------------------------------------------------------
 
-const BYTE
+BYTE
 EncoderMD::GetOpcodeByte2(IR::Instr *instr)
 {
     return OpcodeByte2[instr->m_opcode - (Js::OpCode::MDStart+1)];
@@ -153,7 +154,7 @@ EncoderMD::GetOpbyte(IR::Instr *instr)
 ///
 ///----------------------------------------------------------------------------
 
-const BYTE
+BYTE
 EncoderMD::GetRegEncode(IR::RegOpnd *regOpnd)
 {
     AssertMsg(regOpnd->GetReg() != RegNOREG, "RegOpnd should have valid reg in encoder");
@@ -170,7 +171,7 @@ EncoderMD::GetRegEncode(IR::RegOpnd *regOpnd)
 ///
 ///----------------------------------------------------------------------------
 
-const uint32
+uint32
 EncoderMD::GetOpdope(IR::Instr *instr)
 {
     return Opdope[instr->m_opcode - (Js::OpCode::MDStart+1)];
@@ -184,7 +185,7 @@ EncoderMD::GetOpdope(IR::Instr *instr)
 ///
 ///----------------------------------------------------------------------------
 
-const uint32
+uint32
 EncoderMD::GetLeadIn(IR::Instr * instr)
 {
     return OpcodeLeadIn[instr->m_opcode - (Js::OpCode::MDStart+1)];
@@ -1353,11 +1354,11 @@ EncoderMD::FixRelocListEntry(uint32 index, int32 totalBytesSaved, BYTE *buffStar
                 // ptr points to imm32 offset of the instruction that needs to be adjusted
                 // offset is in top 28-bits, arg count in bottom 4
                 uint32 field = *((uint32*) relocRecord.m_origPtr);
-                uint32 offset = field >> 4;
+                uint32 offset = field >> Js::InlineeCallInfo::inlineeStartOffsetShiftCount;
                 uint32 count = field & 0xf;
 
                 AssertMsg(offset < (uint32)(buffEnd - buffStart), "Inlinee entry offset out of range");
-                relocRecord.SetInlineOffset(((offset - totalBytesSaved) << 4) | count);
+                relocRecord.SetInlineOffset(((offset - totalBytesSaved) << Js::InlineeCallInfo::inlineeStartOffsetShiftCount) | count);
             }
             // adjust the ptr to the buffer itself
             relocRecord.m_ptr = (BYTE*) relocRecord.m_ptr - totalBytesSaved;
@@ -1373,33 +1374,61 @@ EncoderMD::FixRelocListEntry(uint32 index, int32 totalBytesSaved, BYTE *buffStar
 ///
 ///----------------------------------------------------------------------------
 void
-EncoderMD::FixMaps(uint32 brOffset, int32 bytesSaved, uint32 *inlineeFrameRecordsIndex, uint32 *inlineeFrameMapIndex,  uint32 *pragmaInstToRecordOffsetIndex, uint32 *offsetBuffIndex)
+EncoderMD::FixMaps(uint32 brOffset, int32 bytesSaved, FixUpMapIndex *mapIndices)
 
 {
-    InlineeFrameRecords *recList = m_encoder->m_inlineeFrameRecords;
-    InlineeFrameMap *mapList = m_encoder->m_inlineeFrameMap;
-    PragmaInstrList *pInstrList = m_encoder->m_pragmaInstrToRecordOffset;
     int32 i;
-    for (i = *inlineeFrameRecordsIndex; i < recList->Count() && recList->Item(i)->inlineeStartOffset <= brOffset; i++)
-        recList->Item(i)->inlineeStartOffset -= bytesSaved;
 
-    *inlineeFrameRecordsIndex = i;
+    {
+        InlineeFrameRecords *recList = m_encoder->m_inlineeFrameRecords;
+        for (i = mapIndices->inlineeFrameRecordsIndex; i < recList->Count() && recList->Item(i)->inlineeStartOffset <= brOffset; i++)
+        {
+            recList->Item(i)->inlineeStartOffset -= bytesSaved;
+        }
 
-    for (i = *inlineeFrameMapIndex; i < mapList->Count() && mapList->Item(i).offset <= brOffset; i++)
+        mapIndices->inlineeFrameRecordsIndex = i;
+    }
+
+    {
+        ArenaInlineeFrameMap *mapList = m_encoder->m_inlineeFrameMap;
+        for (i = mapIndices->inlineeFrameMapIndex; i < mapList->Count() && mapList->Item(i).offset <= brOffset; i++)
+        {
             mapList->Item(i).offset -= bytesSaved;
+        }
 
-    *inlineeFrameMapIndex = i;
+        mapIndices->inlineeFrameMapIndex = i;
+    }
 
-    for (i = *pragmaInstToRecordOffsetIndex; i < pInstrList->Count() && pInstrList->Item(i)->m_offsetInBuffer <= brOffset; i++)
-        pInstrList->Item(i)->m_offsetInBuffer -= bytesSaved;
+    {
+        PragmaInstrList *pInstrList = m_encoder->m_pragmaInstrToRecordOffset;
+        for (i = mapIndices->pragmaInstToRecordOffsetIndex; i < pInstrList->Count() && pInstrList->Item(i)->m_offsetInBuffer <= brOffset; i++)
+        {
+            pInstrList->Item(i)->m_offsetInBuffer -= bytesSaved;
+        }
 
-    *pragmaInstToRecordOffsetIndex = i;
+        mapIndices->pragmaInstToRecordOffsetIndex = i;
+    }
+
+
+    {
+        ArenaLazyBailoutRecordList *lazyBailOutRecordList = m_encoder->m_sortedLazyBailoutRecordList;
+        for (i = mapIndices->lazyBailOutRecordListIndex; i < lazyBailOutRecordList->Count() && lazyBailOutRecordList->Item(i).offset <= brOffset; i++)
+        {
+            lazyBailOutRecordList->Item(i).offset -= bytesSaved;
+        }
+
+        mapIndices->lazyBailOutRecordListIndex = i;
+    }
 
 #if DBG_DUMP
-    for (i = *offsetBuffIndex; (uint)i < m_encoder->m_instrNumber && m_encoder->m_offsetBuffer[i] <= brOffset; i++)
-        m_encoder->m_offsetBuffer[i] -= bytesSaved;
+    {
+        for (i = mapIndices->offsetBuffIndex; (uint)i < m_encoder->m_instrNumber && m_encoder->m_offsetBuffer[i] <= brOffset; i++)
+        {
+            m_encoder->m_offsetBuffer[i] -= bytesSaved;
+        }
 
-    *offsetBuffIndex = i;
+        mapIndices->offsetBuffIndex = i;
+    }
 #endif
 }
 
@@ -1431,7 +1460,7 @@ EncoderMD::ApplyRelocs(uint32 codeBufferAddress, size_t codeSize, uint * bufferC
                     Assert(*(uint32 *)relocAddress == 0);
                     *(uint32 *)relocAddress = offset;
                 }
-                *bufferCRC = Encoder::CalculateCRC(*bufferCRC, offset);
+                *bufferCRC = CalculateCRC(*bufferCRC, offset);
                 break;
             }
         case RelocTypeBranch:
@@ -1466,7 +1495,7 @@ EncoderMD::ApplyRelocs(uint32 codeBufferAddress, size_t codeSize, uint * bufferC
                         Encoder::EnsureRelocEntryIntegrity(codeBufferAddress, codeSize, (size_t)m_encoder->m_encodeBuffer, (size_t)relocAddress, sizeof(uint32), (ptrdiff_t)labelInstr->GetPC() - ((ptrdiff_t)reloc->m_ptr + 4));
                     }
                 }
-                *bufferCRC = Encoder::CalculateCRC(*bufferCRC, pcrel);
+                *bufferCRC = CalculateCRC(*bufferCRC, pcrel);
                 break;
             }
         case RelocTypeLabelUse:
@@ -1484,7 +1513,7 @@ EncoderMD::ApplyRelocs(uint32 codeBufferAddress, size_t codeSize, uint * bufferC
                 {
                     Encoder::EnsureRelocEntryIntegrity(codeBufferAddress, codeSize, (size_t)m_encoder->m_encodeBuffer, (size_t)relocAddress, sizeof(size_t), targetAddress, false);
                 }
-                *bufferCRC = Encoder::CalculateCRC(*bufferCRC, offset);
+                *bufferCRC = CalculateCRC(*bufferCRC, offset);
                 break;
             }
         case RelocTypeLabel:
@@ -1587,7 +1616,7 @@ EncoderMD::EncodeInlineeCallInfo(IR::Instr *instr, uint32 codeOffset)
     // offset of the start of the inlinee. We shouldn't have gotten here with more arguments
     // than can fit in as many bits.
     const bool encodeResult = Js::InlineeCallInfo::Encode(inlineeCallInfo, (uint32)instr->GetSrc1()->AsIntConstOpnd()->GetValue(), codeOffset);
-    Assert(encodeResult);
+    AssertOrFailFast(encodeResult);
 
     instr->GetSrc1()->AsIntConstOpnd()->SetValue(inlineeCallInfo);
 }

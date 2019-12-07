@@ -66,7 +66,7 @@ namespace TTD
             //The numeric indexed properties associated with the object (or invalid if no associated array)
             TTD_PTR_ID OptIndexedObjectArray;
 
-            //Objects this depends on when creating (or nullptr if no dependencies) 
+            //Objects this depends on when creating (or nullptr if no dependencies)
             DependsOnInfo* OptDependsOnInfo;
 
             //A ptr for the remaining info which must be cast when needed by handler methods
@@ -127,16 +127,16 @@ namespace TTD
         Js::DynamicObject* ObjectPropertyReset_WellKnown(const SnapObject* snpObject, Js::DynamicObject* dynObj, InflateMap* inflator);
         Js::DynamicObject* ObjectPropertyReset_General(const SnapObject* snpObject, Js::DynamicObject* dynObj, InflateMap* inflator);
 
-        //Set all the general properties for the object 
+        //Set all the general properties for the object
         void StdPropertyRestore(const SnapObject* snpObject, Js::DynamicObject* obj, InflateMap* inflator);
 
-        //serialize the object data 
+        //serialize the object data
         void EmitObject(const SnapObject* snpObject, FileWriter* writer, NSTokens::Separator separator, const SnapObjectVTable* vtable, ThreadContext* threadContext);
 
         //de-serialize a SnapObject
         void ParseObject(SnapObject* snpObject, bool readSeparator, FileReader* reader, SlabAllocator& alloc, const SnapObjectVTable* vtable, const TTDIdentifierDictionary<TTD_PTR_ID, NSSnapType::SnapType*>& ptrIdToTypeMap);
 
-#if ENABLE_SNAPSHOT_COMPARE 
+#if ENABLE_SNAPSHOT_COMPARE
         void AssertSnapEquiv(const SnapObject* sobj1, const SnapObject* sobj2, TTDCompareMap& compareMap);
 #endif
 
@@ -177,9 +177,6 @@ namespace TTD
 
             //If the function has computed name information and what it is (check if this is an invalid ptr)
             TTDVar ComputedNameInfo;
-
-            //Flags matching the runtime definitions
-            bool HasSuperReference;
         };
 
         ////
@@ -193,7 +190,7 @@ namespace TTD
         void EmitAddtlInfo_SnapScriptFunctionInfoEx(const SnapScriptFunctionInfo* snapFuncInfo, FileWriter* writer);
         void ParseAddtlInfo_SnapScriptFunctionInfoEx(SnapScriptFunctionInfo* snapFuncInfo, FileReader* reader, SlabAllocator& alloc);
 
-#if ENABLE_SNAPSHOT_COMPARE 
+#if ENABLE_SNAPSHOT_COMPARE
         void AssertSnapEquiv_SnapScriptFunctionInfo(const SnapObject* sobj1, const SnapObject* sobj2, TTDCompareMap& compareMap);
 #endif
 
@@ -214,7 +211,7 @@ namespace TTD
         void EmitAddtlInfo_SnapExternalFunctionInfo(const SnapObject* snpObject, FileWriter* writer);
         void ParseAddtlInfo_SnapExternalFunctionInfo(SnapObject* snpObject, FileReader* reader, SlabAllocator& alloc);
 
-#if ENABLE_SNAPSHOT_COMPARE 
+#if ENABLE_SNAPSHOT_COMPARE
         void AssertSnapEquiv_SnapExternalFunctionInfo(const SnapObject* sobj1, const SnapObject* sobj2, TTDCompareMap& compareMap);
 #endif
 
@@ -226,7 +223,7 @@ namespace TTD
         void EmitAddtlInfo_SnapRevokerFunctionInfo(const SnapObject* snpObject, FileWriter* writer);
         void ParseAddtlInfo_SnapRevokerFunctionInfo(SnapObject* snpObject, FileReader* reader, SlabAllocator& alloc);
 
-#if ENABLE_SNAPSHOT_COMPARE 
+#if ENABLE_SNAPSHOT_COMPARE
         void AssertSnapEquiv_SnapRevokerFunctionInfo(const SnapObject* sobj1, const SnapObject* sobj2, TTDCompareMap& compareMap);
 #endif
 
@@ -254,7 +251,7 @@ namespace TTD
         void EmitAddtlInfo_SnapBoundFunctionInfo(const SnapObject* snpObject, FileWriter* writer);
         void ParseAddtlInfo_SnapBoundFunctionInfo(SnapObject* snpObject, FileReader* reader, SlabAllocator& alloc);
 
-#if ENABLE_SNAPSHOT_COMPARE 
+#if ENABLE_SNAPSHOT_COMPARE
         void AssertSnapEquiv_SnapBoundFunctionInfo(const SnapObject* sobj1, const SnapObject* sobj2, TTDCompareMap& compareMap);
 #endif
 
@@ -280,7 +277,7 @@ namespace TTD
             //number of arguments
             uint32 NumOfArguments;
 
-            //The frame object 
+            //The frame object
             bool IsFrameNullPtr;
             TTD_PTR_ID FrameObject;
 
@@ -374,10 +371,11 @@ namespace TTD
         struct SnapPromiseInfo
         {
             uint32 Status;
+            bool isHandled;
             TTDVar Result;
 
             //
-            //We have the reaction info's inline even theought we want to preserve their pointer identity when inflating. 
+            //We have the reaction info's inline even theought we want to preserve their pointer identity when inflating.
             //So we duplicate data here but avoid needed to add more kinds to the mark/extract logic and will check on inflation.
             //
 
@@ -393,7 +391,7 @@ namespace TTD
         void EmitAddtlInfo_SnapPromiseInfo(const SnapObject* snpObject, FileWriter* writer);
         void ParseAddtlInfo_SnapPromiseInfo(SnapObject* snpObject, FileReader* reader, SlabAllocator& alloc);
 
-#if ENABLE_SNAPSHOT_COMPARE 
+#if ENABLE_SNAPSHOT_COMPARE
         void AssertSnapEquiv_SnapPromiseInfo(const SnapObject* sobj1, const SnapObject* sobj2, TTDCompareMap& compareMap);
 #endif
 
@@ -414,7 +412,7 @@ namespace TTD
         void EmitAddtlInfo_SnapPromiseResolveOrRejectFunctionInfo(const SnapObject* snpObject, FileWriter* writer);
         void ParseAddtlInfo_SnapPromiseResolveOrRejectFunctionInfo(SnapObject* snpObject, FileReader* reader, SlabAllocator& alloc);
 
-#if ENABLE_SNAPSHOT_COMPARE 
+#if ENABLE_SNAPSHOT_COMPARE
         void AssertSnapEquiv_SnapPromiseResolveOrRejectFunctionInfo(const SnapObject* sobj1, const SnapObject* sobj2, TTDCompareMap& compareMap);
 #endif
 
@@ -432,7 +430,7 @@ namespace TTD
         void EmitAddtlInfo_SnapPromiseReactionTaskFunctionInfo(const SnapObject* snpObject, FileWriter* writer);
         void ParseAddtlInfo_SnapPromiseReactionTaskFunctionInfo(SnapObject* snpObject, FileReader* reader, SlabAllocator& alloc);
 
-#if ENABLE_SNAPSHOT_COMPARE 
+#if ENABLE_SNAPSHOT_COMPARE
         void AssertSnapEquiv_SnapPromiseReactionTaskFunctionInfo(const SnapObject* sobj1, const SnapObject* sobj2, TTDCompareMap& compareMap);
 #endif
 
@@ -455,8 +453,35 @@ namespace TTD
         void EmitAddtlInfo_SnapPromiseAllResolveElementFunctionInfo(const SnapObject* snpObject, FileWriter* writer);
         void ParseAddtlInfo_SnapPromiseAllResolveElementFunctionInfo(SnapObject* snpObject, FileReader* reader, SlabAllocator& alloc);
 
-#if ENABLE_SNAPSHOT_COMPARE 
+#if ENABLE_SNAPSHOT_COMPARE
         void AssertSnapEquiv_SnapPromiseAllResolveElementFunctionInfo(const SnapObject* sobj1, const SnapObject* sobj2, TTDCompareMap& compareMap);
+#endif
+
+        ////
+        //AllSettledResolveOrRejectElementFunctionObject Info
+        struct SnapPromiseAllSettledResolveOrRejectElementFunctionInfo
+        {
+            NSSnapValues::SnapPromiseCapabilityInfo Capabilities;
+            uint32 Index;
+
+            TTD_PTR_ID RemainingElementsWrapperId;
+            uint32 RemainingElementsValue;
+
+            TTD_PTR_ID AlreadyCalledWrapperId;
+            bool AlreadyCalledValue;
+
+            bool IsRejecting;
+
+            TTD_PTR_ID Values;
+        };
+
+        Js::RecyclableObject* DoObjectInflation_SnapPromiseAllSettledResolveOrRejectElementFunctionInfo(const SnapObject* snpObject, InflateMap* inflator);
+        //DoAddtlValueInstantiation is a nop
+        void EmitAddtlInfo_SnapPromiseAllSettledResolveOrRejectElementFunctionInfo(const SnapObject* snpObject, FileWriter* writer);
+        void ParseAddtlInfo_SnapPromiseAllSettledResolveOrRejectElementFunctionInfo(SnapObject* snpObject, FileReader* reader, SlabAllocator& alloc);
+
+#if ENABLE_SNAPSHOT_COMPARE
+        void AssertSnapEquiv_SnapPromiseAllSettledResolveOrRejectElementFunctionInfo(const SnapObject* sobj1, const SnapObject* sobj2, TTDCompareMap& compareMap);
 #endif
 
         //////////////////
@@ -469,7 +494,7 @@ namespace TTD
         void EmitAddtlInfo_SnapBoxedValue(const SnapObject* snpObject, FileWriter* writer);
         void ParseAddtlInfo_SnapBoxedValue(SnapObject* snpObject, FileReader* reader, SlabAllocator& alloc);
 
-#if ENABLE_SNAPSHOT_COMPARE 
+#if ENABLE_SNAPSHOT_COMPARE
         void AssertSnapEquiv_SnapBoxedValue(const SnapObject* sobj1, const SnapObject* sobj2, TTDCompareMap& compareMap);
 #endif
 
@@ -481,7 +506,7 @@ namespace TTD
         void EmitAddtlInfo_SnapDate(const SnapObject* snpObject, FileWriter* writer);
         void ParseAddtlInfo_SnapDate(SnapObject* snpObject, FileReader* reader, SlabAllocator& alloc);
 
-#if ENABLE_SNAPSHOT_COMPARE 
+#if ENABLE_SNAPSHOT_COMPARE
         void AssertSnapEquiv_SnapDate(const SnapObject* sobj1, const SnapObject* sobj2, TTDCompareMap& compareMap);
 #endif
 
@@ -509,7 +534,7 @@ namespace TTD
         void EmitAddtlInfo_SnapRegexInfo(const SnapObject* snpObject, FileWriter* writer);
         void ParseAddtlInfo_SnapRegexInfo(SnapObject* snpObject, FileReader* reader, SlabAllocator& alloc);
 
-#if ENABLE_SNAPSHOT_COMPARE 
+#if ENABLE_SNAPSHOT_COMPARE
         void AssertSnapEquiv_SnapRegexInfo(const SnapObject* sobj1, const SnapObject* sobj2, TTDCompareMap& compareMap);
 #endif
 
@@ -634,7 +659,7 @@ namespace TTD
         void SnapArrayInfo_EmitValue(TTDVar value, FileWriter* writer);
         void SnapArrayInfo_ParseValue(TTDVar* into, FileReader* reader, SlabAllocator& alloc);
 
-#if ENABLE_SNAPSHOT_COMPARE 
+#if ENABLE_SNAPSHOT_COMPARE
         void SnapArrayInfo_EquivValue(int32 val1, int32 val2, TTDCompareMap& compareMap, int32 i);
         void SnapArrayInfo_EquivValue(double val1, double val2, TTDCompareMap& compareMap, int32 i);
         void SnapArrayInfo_EquivValue(TTDVar val1, TTDVar val2, TTDCompareMap& compareMap, int32 i);
@@ -671,7 +696,7 @@ namespace TTD
                     Js::DynamicObject* rcObj = ReuseObjectCheckAndReset(snpObject, inflator);
                     if(rcObj != nullptr)
                     {
-                        Js::JavascriptArray::FromVar(rcObj)->SetLength(preAllocSpace);
+                        Js::VarTo<Js::JavascriptArray>(rcObj)->SetLength(preAllocSpace);
                         return rcObj;
                     }
                     else

@@ -14,7 +14,13 @@ namespace Js {
 
     inline BOOL JavascriptConversion::ToBoolean(Var aValue,ScriptContext* scriptContext)
     {
-        if (TaggedInt::Is(aValue))
+        JIT_HELPER_NOT_REENTRANT_HEADER(Conv_ToBoolean, reentrancylock, scriptContext->GetThreadContext());
+
+        if (VarIs<JavascriptBoolean>(aValue))
+        {
+            return UnsafeVarTo<JavascriptBoolean>(aValue)->GetValue();
+        }
+        else if (TaggedInt::Is(aValue))
         {
             return aValue != reinterpret_cast<Var>(AtomTag_IntPtr);
         }
@@ -73,6 +79,7 @@ namespace Js {
 
     inline uint32 JavascriptConversion::ToUInt32(Var aValue, ScriptContext* scriptContext)
     {
+        JIT_HELPER_REENTRANT_HEADER(Conv_ToUInt32);
         return
             TaggedInt::Is(aValue) ?
             TaggedInt::ToUInt32(aValue) :
@@ -246,7 +253,7 @@ namespace Js {
            {
                return nullptr;
            }
-           int64 int64Val = JavascriptInt64Number::UnsafeFromVar(value)->GetValue();
+           int64 int64Val = UnsafeVarTo<JavascriptInt64Number>(value)->GetValue();
 
            return TryCanonicalizeIntHelper<int64, allowNegOne>(int64Val);
 
@@ -257,7 +264,7 @@ namespace Js {
            {
                return nullptr;
            }
-           uint64 uint64Val = JavascriptUInt64Number::UnsafeFromVar(value)->GetValue();
+           uint64 uint64Val = UnsafeVarTo<JavascriptUInt64Number>(value)->GetValue();
 
            return TryCanonicalizeIntHelper<uint64, allowNegOne>(uint64Val);
        }
@@ -292,9 +299,17 @@ namespace Js {
            {
                return taggedInt;
            }
-
 #if FLOATVAR
-           return value;
+           if (typeId == TypeIds_Number)
+           {
+               double numberValue = JavascriptNumber::GetValue(value);
+               // NaN and -NaN do not canonicalize to the same value, but they are equal, so only allow +NaN
+               return JavascriptNumber::IsNan(numberValue)
+                   ? JavascriptNumber::IsNegative(numberValue)
+                        ? nullptr
+                        : JavascriptNumber::ToVar(JavascriptNumber::NaN)
+                   : value;
+           }
 #else
            return nullptr;
 #endif

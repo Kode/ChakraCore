@@ -7,8 +7,8 @@
 #include "Library/ProfileString.h"
 #include "Library/SingleCharString.h"
 
-namespace Js
-{
+using namespace Js;
+
     CharStringCache::CharStringCache() : charStringCache(nullptr)
     {
         ClearArray(charStringCacheA);
@@ -35,6 +35,7 @@ namespace Js
 
     JavascriptString* CharStringCache::GetStringForChar(char16 c)
     {
+        JIT_HELPER_NOT_REENTRANT_NOLOCK_HEADER(GetStringForChar);
 #ifdef PROFILE_STRINGS
         StringProfiler::RecordSingleCharStringRequest(JavascriptLibrary::FromCharStringCache(this)->GetScriptContext());
 #endif
@@ -44,7 +45,9 @@ namespace Js
         }
 
         return GetStringForCharW(c);
+        JIT_HELPER_END(GetStringForChar);
     }
+    JIT_HELPER_TEMPLATE(GetStringForChar, GetStringForCharCodePoint)
 
     JavascriptString* CharStringCache::GetStringForCharW(char16 c)
     {
@@ -75,11 +78,19 @@ namespace Js
     {
         Assert(c >= 0x10000);
         CompileAssert(sizeof(char16) * 2 == sizeof(codepoint_t));
+
+        ScriptContext* scriptContext = JavascriptLibrary::FromCharStringCache(this)->GetScriptContext();
+
+        // #sec - string.fromcodepoint: "If nextCP < 0 or nextCP > 0x10FFFF, throw a RangeError exception"
+        if (c > 0x10FFFF)
+        {
+            JavascriptError::ThrowRangeError(scriptContext, JSERR_InvalidCodePoint, scriptContext->GetIntegerString(c));
+        }
+
         char16 buffer[2];
 
         Js::NumberUtilities::CodePointAsSurrogatePair(c, buffer, buffer + 1);
-        JavascriptString* str = JavascriptString::NewCopyBuffer(buffer, 2, JavascriptLibrary::FromCharStringCache(this)->GetScriptContext());
+        JavascriptString* str = JavascriptString::NewCopyBuffer(buffer, 2, scriptContext);
         // TODO: perhaps do some sort of cache for supplementary characters
         return str;
     }
-};

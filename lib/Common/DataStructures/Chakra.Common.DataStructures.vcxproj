@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Condition="'$(ChakraBuildPathImported)'!='true'" Project="$(SolutionDir)Chakra.Build.Paths.props" />
   <Import Project="$(BuildConfigPropsPath)Chakra.Build.ProjectConfiguration.props" />
@@ -26,12 +26,10 @@
       </AdditionalIncludeDirectories>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>CommonDataStructuresPch.h</PrecompiledHeaderFile>
-      <!-- # Check out https://osgwiki.com/wiki/Dev_14_Migration for more details about -Zc:implicitNoexcept- -->
-      <AdditionalOptions>-Zc:implicitNoexcept- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="$(MSBuildThisFileDirectory)BigInt.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)BigUInt.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)BufferBuilder.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)DictionaryStats.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)GrowingArray.cpp" />
@@ -47,11 +45,12 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="BigInt.h" />
+    <ClInclude Include="BigUInt.h" />
     <ClInclude Include="BaseDictionary.h" />
     <ClInclude Include="BufferBuilder.h" />
     <ClInclude Include="Cache.h" />
     <ClInclude Include="CharacterBuffer.h" />
+    <ClInclude Include="ClusterList.h" />
     <ClInclude Include="CommonDataStructuresPch.h" />
     <ClInclude Include="ContinuousPageStack.h" />
     <ClInclude Include="DefaultContainerLockPolicy.h" />

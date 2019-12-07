@@ -95,7 +95,7 @@ CHAKRA_API JsDiagStartDebugging(
             HRESULT hr;
             if (FAILED(hr = scriptContext->OnDebuggerAttached()))
             {
-                Debugger_AttachDetach_fatal_error(hr); // Inconsistent state, we can't continue from here
+                Debugger_AttachDetach_unrecoverable_error(hr); // Inconsistent state, we can't continue from here
                 return JsErrorFatal;
             }
 
@@ -147,7 +147,7 @@ CHAKRA_API JsDiagStopDebugging(
             HRESULT hr;
             if (FAILED(hr = scriptContext->OnDebuggerDetached()))
             {
-                Debugger_AttachDetach_fatal_error(hr); // Inconsistent state, we can't continue from here
+                Debugger_AttachDetach_unrecoverable_error(hr); // Inconsistent state, we can't continue from here
                 return JsErrorFatal;
             }
 
@@ -269,17 +269,12 @@ CHAKRA_API JsDiagGetBreakpoints(
 #ifndef ENABLE_SCRIPT_DEBUGGING
     return JsErrorCategoryUsage;
 #else
-    return GlobalAPIWrapper_NoRecord([&]() -> JsErrorCode {
-
+    return ContextAPIWrapper_NoRecord<false>([&](Js::ScriptContext* scriptContext) -> JsErrorCode {
         PARAM_NOT_NULL(breakpoints);
-
         *breakpoints = JS_INVALID_REFERENCE;
 
-        JsrtContext *currentContext = JsrtContext::GetCurrent();
-
-        Js::JavascriptArray* bpsArray = currentContext->GetScriptContext()->GetLibrary()->CreateArray();
-
-        JsrtRuntime * runtime = currentContext->GetRuntime();
+        JsrtContext* currentContext = JsrtContext::GetCurrent();
+        JsrtRuntime* runtime = currentContext->GetRuntime();
 
         ThreadContextScope scope(runtime->GetThreadContext());
 
@@ -289,18 +284,18 @@ CHAKRA_API JsDiagGetBreakpoints(
         }
 
         JsrtDebugManager* jsrtDebugManager = runtime->GetJsrtDebugManager();
-
         VALIDATE_IS_DEBUGGING(jsrtDebugManager);
 
-        for (Js::ScriptContext *scriptContext = runtime->GetThreadContext()->GetScriptContextList();
-        scriptContext != nullptr && !scriptContext->IsClosed();
-            scriptContext = scriptContext->next)
+        Js::JavascriptArray* bpsArray = currentContext->GetScriptContext()->GetLibrary()->CreateArray();
+
+        for (Js::ScriptContext* currentScriptContext = runtime->GetThreadContext()->GetScriptContextList();
+            currentScriptContext != nullptr && !currentScriptContext->IsClosed();
+            currentScriptContext = currentScriptContext->next)
         {
-            jsrtDebugManager->GetBreakpoints(&bpsArray, scriptContext);
+            jsrtDebugManager->GetBreakpoints(&bpsArray, currentScriptContext);
         }
 
         *breakpoints = bpsArray;
-
         return JsNoError;
     });
 #endif
@@ -315,15 +310,12 @@ CHAKRA_API JsDiagSetBreakpoint(
 #ifndef ENABLE_SCRIPT_DEBUGGING
     return JsErrorCategoryUsage;
 #else
-    return GlobalAPIWrapper_NoRecord([&]() -> JsErrorCode {
-
+    return ContextAPIWrapper_NoRecord<false>([&](Js::ScriptContext* scriptContext) -> JsErrorCode {
         PARAM_NOT_NULL(breakpoint);
-
         *breakpoint = JS_INVALID_REFERENCE;
 
-        JsrtContext *currentContext = JsrtContext::GetCurrent();
-
-        JsrtRuntime * runtime = currentContext->GetRuntime();
+        JsrtContext* currentContext = JsrtContext::GetCurrent();
+        JsrtRuntime* runtime = currentContext->GetRuntime();
 
         ThreadContextScope scope(runtime->GetThreadContext());
 
@@ -336,11 +328,11 @@ CHAKRA_API JsDiagSetBreakpoint(
 
         Js::Utf8SourceInfo* utf8SourceInfo = nullptr;
 
-        for (Js::ScriptContext *scriptContext = runtime->GetThreadContext()->GetScriptContextList();
-        scriptContext != nullptr && utf8SourceInfo == nullptr && !scriptContext->IsClosed();
-            scriptContext = scriptContext->next)
+        for (Js::ScriptContext* currentScriptContext = runtime->GetThreadContext()->GetScriptContextList();
+            currentScriptContext != nullptr && utf8SourceInfo == nullptr && !currentScriptContext->IsClosed();
+            currentScriptContext = currentScriptContext->next)
         {
-            scriptContext->MapScript([&](Js::Utf8SourceInfo* sourceInfo) -> bool
+            currentScriptContext->MapScript([&](Js::Utf8SourceInfo* sourceInfo) -> bool
             {
                 if (sourceInfo->GetSourceInfoId() == scriptId)
                 {
@@ -354,7 +346,6 @@ CHAKRA_API JsDiagSetBreakpoint(
         if (utf8SourceInfo != nullptr && utf8SourceInfo->HasDebugDocument())
         {
             JsrtDebugManager* jsrtDebugManager = runtime->GetJsrtDebugManager();
-
             Js::DynamicObject* bpObject = jsrtDebugManager->SetBreakPoint(currentContext->GetScriptContext(), utf8SourceInfo, lineNumber, columnNumber);
 
             if(bpObject != nullptr)
@@ -377,10 +368,8 @@ CHAKRA_API JsDiagRemoveBreakpoint(
 #ifndef ENABLE_SCRIPT_DEBUGGING
     return JsErrorCategoryUsage;
 #else
-    return GlobalAPIWrapper_NoRecord([&]() -> JsErrorCode {
-
-        JsrtContext *currentContext = JsrtContext::GetCurrent();
-
+    return ContextAPIWrapper_NoRecord<false>([&](Js::ScriptContext* scriptContext) -> JsErrorCode {
+        JsrtContext* currentContext = JsrtContext::GetCurrent();
         JsrtRuntime* runtime = currentContext->GetRuntime();
 
         ThreadContextScope scope(runtime->GetThreadContext());
@@ -391,7 +380,6 @@ CHAKRA_API JsDiagRemoveBreakpoint(
         }
 
         JsrtDebugManager* jsrtDebugManager = runtime->GetJsrtDebugManager();
-
         VALIDATE_IS_DEBUGGING(jsrtDebugManager);
 
         if (!jsrtDebugManager->RemoveBreakpoint(breakpointId))
@@ -491,7 +479,7 @@ CHAKRA_API JsDiagSetStepType(
             ThreadContext* threadContext = runtime->GetThreadContext();
             if(!threadContext->IsRuntimeInTTDMode())
             {
-                //Don't want to fail hard when user accidentally clicks this so pring message and step forward 
+                //Don't want to fail hard when user accidentally clicks this so pring message and step forward
                 fprintf(stderr, "Must be in replay mode to use reverse-step - launch with \"--replay-debug\" flag in Node.");
                 jsrtDebugManager->SetResumeType(BREAKRESUMEACTION_STEP_OVER);
             }
@@ -512,7 +500,7 @@ CHAKRA_API JsDiagSetStepType(
             ThreadContext* threadContext = runtime->GetThreadContext();
             if(!threadContext->IsRuntimeInTTDMode())
             {
-                //Don't want to fail hard when user accidentally clicks this so pring message and step forward 
+                //Don't want to fail hard when user accidentally clicks this so pring message and step forward
                 fprintf(stderr, "Must be in replay mode to use reverse-continue - launch with \"--replay-debug\" flag in Node.");
                 jsrtDebugManager->SetResumeType(BREAKRESUMEACTION_CONTINUE);
             }
@@ -578,12 +566,12 @@ CHAKRA_API JsDiagGetFunctionPosition(
 
         *functionPosition = JS_INVALID_REFERENCE;
 
-        if (!Js::RecyclableObject::Is(function) || !Js::ScriptFunction::Is(function))
+        if (!Js::VarIs<Js::RecyclableObject>(function) || !Js::VarIs<Js::ScriptFunction>(function))
         {
             return JsErrorInvalidArgument;
         }
 
-        Js::ScriptFunction* jsFunction = Js::ScriptFunction::FromVar(function);
+        Js::ScriptFunction* jsFunction = Js::VarTo<Js::ScriptFunction>(function);
 
         BOOL fParsed = jsFunction->GetParseableFunctionInfo()->IsFunctionParsed();
         if (!fParsed)
@@ -800,13 +788,13 @@ CHAKRA_API JsDiagEvaluate(
         PARAM_NOT_NULL(expressionVal);
         PARAM_NOT_NULL(evalResult);
 
-        bool isArrayBuffer = Js::ArrayBuffer::Is(expressionVal),
+        bool isArrayBuffer = Js::VarIs<Js::ArrayBuffer>(expressionVal),
              isString = false;
         bool isUtf8   = !(parseAttributes & JsParseScriptAttributeArrayBufferIsUtf16Encoded);
 
         if (!isArrayBuffer)
         {
-            isString = Js::JavascriptString::Is(expressionVal);
+            isString = Js::VarIs<Js::JavascriptString>(expressionVal);
             if (!isString)
             {
                 return JsErrorInvalidArgument;
@@ -814,8 +802,8 @@ CHAKRA_API JsDiagEvaluate(
         }
 
         const size_t len = isArrayBuffer ?
-            Js::ArrayBuffer::FromVar(expressionVal)->GetByteLength() :
-            Js::JavascriptString::FromVar(expressionVal)->GetLength();
+            Js::VarTo<Js::ArrayBuffer>(expressionVal)->GetByteLength() :
+            Js::VarTo<Js::JavascriptString>(expressionVal)->GetLength();
 
         if (len > INT_MAX)
         {
@@ -827,7 +815,7 @@ CHAKRA_API JsDiagEvaluate(
         if (isArrayBuffer && isUtf8)
         {
             wide_expression.Initialize(
-                (const char*)Js::ArrayBuffer::FromVar(expressionVal)->GetBuffer(), len);
+                (const char*)Js::VarTo<Js::ArrayBuffer>(expressionVal)->GetBuffer(), len);
             if (!wide_expression)
             {
                 return JsErrorOutOfMemory;
@@ -837,9 +825,9 @@ CHAKRA_API JsDiagEvaluate(
         else
         {
             expression = !isArrayBuffer ?
-                Js::JavascriptString::FromVar(expressionVal)->GetSz() // String
+                Js::VarTo<Js::JavascriptString>(expressionVal)->GetSz() // String
                 :
-                (const WCHAR*)Js::ArrayBuffer::FromVar(expressionVal)->GetBuffer(); // ArrayBuffer;
+                (const WCHAR*)Js::VarTo<Js::ArrayBuffer>(expressionVal)->GetBuffer(); // ArrayBuffer;
         }
 
         *evalResult = JS_INVALID_REFERENCE;

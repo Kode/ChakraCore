@@ -20,7 +20,7 @@ public:
     }
 
 private:
-    static const uint32 BitMask(const uint index)
+    static uint32 BitMask(const uint index)
     {
         return 1u << index;
     }
@@ -103,6 +103,17 @@ struct StackLiteralInitFldData
 typedef JsUtil::BaseDictionary<StackSym *, StackLiteralInitFldData, JitArenaAllocator> StackLiteralInitFldDataMap;
 
 typedef SList<GlobHashBucket*, JitArenaAllocator> PRECandidatesList;
+class PRECandidates
+{
+public:
+    PRECandidates() : candidatesToProcess(nullptr), candidatesBv(nullptr), candidatesList(nullptr) {}
+
+public:
+    BVSparse<JitArenaAllocator> * candidatesToProcess;
+    BVSparse<JitArenaAllocator> * candidatesBv;
+    PRECandidatesList * candidatesList;
+};
+
 
 class GlobOptBlockData
 {
@@ -118,7 +129,6 @@ public:
         liveInt32Syms(nullptr),
         liveLossyInt32Syms(nullptr),
         liveFloat64Syms(nullptr),
-        hoistableFields(nullptr),
         argObjSyms(nullptr),
         maybeTempObjectSyms(nullptr),
         canStoreTempObjectSyms(nullptr),
@@ -158,7 +168,6 @@ public:
     // Conversely, a lossless int32 sym can be reused to avoid a lossy conversion.
     BVSparse<JitArenaAllocator> *           liveLossyInt32Syms;
     BVSparse<JitArenaAllocator> *           liveFloat64Syms;
-    BVSparse<JitArenaAllocator> *           hoistableFields;
     BVSparse<JitArenaAllocator> *           argObjSyms;
     BVSparse<JitArenaAllocator> *           maybeTempObjectSyms;
     BVSparse<JitArenaAllocator> *           canStoreTempObjectSyms;
@@ -243,7 +252,7 @@ public:
     void                    CloneBlockData(BasicBlock *const toBlock, BasicBlock *const fromBlock);
 
 public:
-    void                    RemoveUnavailableCandidates(PRECandidatesList *candidates);
+    void                    RemoveUnavailableCandidates(PRECandidates *candidates);
 
     // Merging functions
 public:
@@ -252,10 +261,10 @@ private:
     template <typename CaptureList, typename CapturedItemsAreEqual>
     void                    MergeCapturedValues(SListBase<CaptureList>* toList, SListBase<CaptureList> * fromList, CapturedItemsAreEqual itemsAreEqual);
     void                    MergeValueMaps(BasicBlock *toBlock, BasicBlock *fromBlock, BVSparse<JitArenaAllocator> *const symsRequiringCompensation, BVSparse<JitArenaAllocator> *const symsCreatedForMerge);
-    Value *                 MergeValues(Value *toDataValue, Value *fromDataValue, Sym *fromDataSym, bool isLoopBackEdge, BVSparse<JitArenaAllocator> *const symsRequiringCompensation, BVSparse<JitArenaAllocator> *const symsCreatedForMerge);
+    Value *                 MergeValues(Value *toDataValue, Value *fromDataValue, Sym *fromDataSym, bool isLoopBackEdge, bool forceUniqueValue, BVSparse<JitArenaAllocator> *const symsRequiringCompensation, BVSparse<JitArenaAllocator> *const symsCreatedForMerge);
     ValueInfo *             MergeValueInfo(Value *toDataVal, Value *fromDataVal, Sym *fromDataSym, bool isLoopBackEdge, bool sameValueNumber, BVSparse<JitArenaAllocator> *const symsRequiringCompensation, BVSparse<JitArenaAllocator> *const symsCreatedForMerge);
     JsTypeValueInfo *       MergeJsTypeValueInfo(JsTypeValueInfo * toValueInfo, JsTypeValueInfo * fromValueInfo, bool isLoopBackEdge, bool sameValueNumber);
-    ValueInfo *             MergeArrayValueInfo(const ValueType mergedValueType, const ArrayValueInfo *const toDataValueInfo, const ArrayValueInfo *const fromDataValueInfo, Sym *const arraySym, BVSparse<JitArenaAllocator> *const symsRequiringCompensation, BVSparse<JitArenaAllocator> *const symsCreatedForMerge);
+    ValueInfo *             MergeArrayValueInfo(const ValueType mergedValueType, const ArrayValueInfo *const toDataValueInfo, const ArrayValueInfo *const fromDataValueInfo, Sym *const arraySym, BVSparse<JitArenaAllocator> *const symsRequiringCompensation, BVSparse<JitArenaAllocator> *const symsCreatedForMerge, bool isLoopBackEdge);
 
     // Argument Tracking
 public:
@@ -311,8 +320,9 @@ public:
 private:
 
     // Other
+    void                    KillSymToValueMapForGeneratorYield();
 public:
-    void                    KillStateForGeneratorYield();
+    void                    KillStateForGeneratorYield(IR::Instr *yieldInstr);
 
     // Debug
 public:

@@ -27,26 +27,29 @@ HRESULT JsInitializeJITServer(
         return status;
     }
 
-#ifndef NTBUILD
-    status = RpcServerRegisterIf2(
-        ServerIChakraJIT_v0_0_s_ifspec,
-        NULL,
-        NULL,
-        RPC_IF_AUTOLISTEN,
-        RPC_C_LISTEN_MAX_CALLS_DEFAULT,
-        (ULONG)-1,
-        NULL);
-#else
-    status = RpcServerRegisterIf3(
-        ServerIChakraJIT_v0_0_s_ifspec,
-        NULL,
-        NULL,
-        RPC_IF_AUTOLISTEN,
-        RPC_C_LISTEN_MAX_CALLS_DEFAULT,
-        (ULONG)-1,
-        NULL,
-        securityDescriptor);
-#endif
+    if (AutoSystemInfo::Data.IsWin8OrLater())
+    {
+        status = RPCLibrary::Instance->RpcServerRegisterIf3(
+            ServerIChakraJIT_v0_0_s_ifspec,
+            NULL,
+            NULL,
+            RPC_IF_AUTOLISTEN,
+            RPC_C_LISTEN_MAX_CALLS_DEFAULT,
+            (ULONG)-1,
+            NULL,
+            securityDescriptor);
+    }
+    else
+    {
+        status = RpcServerRegisterIf2(
+            ServerIChakraJIT_v0_0_s_ifspec,
+            NULL,
+            NULL,
+            RPC_IF_AUTOLISTEN,
+            RPC_C_LISTEN_MAX_CALLS_DEFAULT,
+            (ULONG)-1,
+            NULL);
+    }
     if (status != RPC_S_OK)
     {
         return status;
@@ -119,91 +122,10 @@ __RPC_USER PSCRIPTCONTEXT_HANDLE_rundown(__RPC__in PSCRIPTCONTEXT_HANDLE phConte
     ServerCleanupScriptContext(nullptr, &phContext);
 }
 
-HRESULT CheckModuleAddress(HANDLE process, LPCVOID remoteImageBase, LPCVOID localImageBase)
-{
-    byte remoteImageHeader[0x1000];
-    MEMORY_BASIC_INFORMATION remoteImageInfo;
-    SIZE_T resultBytes = VirtualQueryEx(process, (LPCVOID)remoteImageBase, &remoteImageInfo, sizeof(remoteImageInfo));
-    if (resultBytes != sizeof(remoteImageInfo))
-    {
-        Assert(UNREACHED);
-        return E_ACCESSDENIED;
-    }
-    if (remoteImageInfo.BaseAddress != (PVOID)remoteImageBase)
-    {
-        Assert(UNREACHED);
-        return E_ACCESSDENIED;
-    }
-    if (remoteImageInfo.Type != MEM_IMAGE)
-    {
-        Assert(UNREACHED);
-        return E_ACCESSDENIED;
-    }
-    if (remoteImageInfo.State != MEM_COMMIT)
-    {
-        Assert(UNREACHED);
-        return E_ACCESSDENIED;
-    }
-
-    if (remoteImageInfo.RegionSize < sizeof(remoteImageHeader))
-    {
-        Assert(UNREACHED);
-        return E_ACCESSDENIED;
-    }
-
-    if (!ReadProcessMemory(process, remoteImageBase, remoteImageHeader, sizeof(remoteImageHeader), &resultBytes))
-    {
-        return HRESULT_FROM_WIN32(GetLastError());
-    }
-    if (resultBytes < sizeof(remoteImageHeader))
-    {
-        Assert(UNREACHED);
-        return E_ACCESSDENIED;
-    }
-    PIMAGE_DOS_HEADER localDosHeader = (PIMAGE_DOS_HEADER)localImageBase;
-    PIMAGE_NT_HEADERS localNtHeader = (PIMAGE_NT_HEADERS)((BYTE*)localDosHeader + localDosHeader->e_lfanew);
-
-    PIMAGE_DOS_HEADER remoteDosHeader = (PIMAGE_DOS_HEADER)remoteImageHeader;
-    PIMAGE_NT_HEADERS remoteNtHeader = (PIMAGE_NT_HEADERS)((BYTE*)remoteDosHeader + remoteDosHeader->e_lfanew);
-
-    uintptr_t remoteHeaderMax = (uintptr_t)remoteImageHeader + sizeof(remoteImageHeader);
-    uintptr_t remoteMaxRead = (uintptr_t)remoteNtHeader + sizeof(IMAGE_NT_HEADERS);
-    if (remoteMaxRead >= remoteHeaderMax || remoteMaxRead < (uintptr_t)remoteImageHeader)
-    {
-        Assert(UNREACHED);
-        return E_ACCESSDENIED;
-    }
-
-    if (localNtHeader->FileHeader.NumberOfSections != remoteNtHeader->FileHeader.NumberOfSections)
-    {
-        Assert(UNREACHED);
-        return E_ACCESSDENIED;
-    }
-    if (localNtHeader->FileHeader.NumberOfSymbols != remoteNtHeader->FileHeader.NumberOfSymbols)
-    {
-        Assert(UNREACHED);
-        return E_ACCESSDENIED;
-    }
-    if (localNtHeader->OptionalHeader.CheckSum != remoteNtHeader->OptionalHeader.CheckSum)
-    {
-        Assert(UNREACHED);
-        return E_ACCESSDENIED;
-    }
-    if (localNtHeader->OptionalHeader.SizeOfImage != remoteNtHeader->OptionalHeader.SizeOfImage)
-    {
-        Assert(UNREACHED);
-        return E_ACCESSDENIED;
-    }
-
-    return S_OK;
-}
-
 HRESULT
-ServerConnectProcess(
+ServerConnectProcessWithProcessHandle(
     handle_t binding,
-#ifdef USE_RPC_HANDLE_MARSHALLING
     HANDLE processHandle,
-#endif
     intptr_t chakraBaseAddress,
     intptr_t crtBaseAddress
 )
@@ -214,33 +136,47 @@ ServerConnectProcess(
     {
         return hr;
     }
-#ifdef USE_RPC_HANDLE_MARSHALLING
-    HANDLE targetHandle;
+    HANDLE targetHandle = nullptr;
+    // RPC handle marshalling is only available on 8.1+
     if (!DuplicateHandle(GetCurrentProcess(), processHandle, GetCurrentProcess(), &targetHandle, 0, false, DUPLICATE_SAME_ACCESS))
     {
         Assert(UNREACHED);
         return E_ACCESSDENIED;
     }
-#else
-    HANDLE targetHandle = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_LIMITED_INFORMATION, false, clientPid);
+    return ProcessContextManager::RegisterNewProcess(clientPid, targetHandle, chakraBaseAddress, crtBaseAddress);
+}
+
+#if !(WINVER >= _WIN32_WINNT_WINBLUE)
+HRESULT
+ServerConnectProcess(
+    handle_t binding,
+    intptr_t chakraBaseAddress,
+    intptr_t crtBaseAddress
+)
+{
+    // Should use ServerConnectProcessWithProcessHandle on 8.1+
+    if (AutoSystemInfo::Data.IsWin8Point1OrLater())
+    {
+        Assert(UNREACHED);
+        return E_ACCESSDENIED;
+    }
+
+    DWORD clientPid;
+    HRESULT hr = HRESULT_FROM_WIN32(I_RpcBindingInqLocalClientPID(binding, &clientPid));
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+    HANDLE targetHandle = nullptr;
+    targetHandle = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION, false, clientPid);
     if (!targetHandle)
     {
         Assert(UNREACHED);
         return E_ACCESSDENIED;
     }
-#endif
-    hr = CheckModuleAddress(targetHandle, (LPCVOID)chakraBaseAddress, (LPCVOID)AutoSystemInfo::Data.dllLoadAddress);
-    if (FAILED(hr))
-    {
-        return hr;
-    }
-    hr = CheckModuleAddress(targetHandle, (LPCVOID)crtBaseAddress, (LPCVOID)AutoSystemInfo::Data.GetCRTHandle());
-    if (FAILED(hr))
-    {
-        return hr;
-    }
     return ProcessContextManager::RegisterNewProcess(clientPid, targetHandle, chakraBaseAddress, crtBaseAddress);
 }
+#endif
 
 #pragma warning(push)
 #pragma warning(disable:6387 28196) // PREFast does not understand the out context can be null here
@@ -310,6 +246,7 @@ ServerInitializeThreadContext(
         if (!PHASE_OFF1(Js::PreReservedHeapAllocPhase))
         {
             *prereservedRegionAddr = (intptr_t)contextInfo->GetPreReservedSectionAllocator()->EnsurePreReservedRegion();
+            contextInfo->SetCanCreatePreReservedSegment(*prereservedRegionAddr != 0);
         }
 #if !defined(_M_ARM)
         *jitThunkAddr = (intptr_t)contextInfo->GetJITThunkEmitter()->EnsureInitialized();
@@ -418,6 +355,11 @@ ServerAddDOMFastPathHelper(
         Assert(false);
         return RPC_S_INVALID_ARG;
     }
+    if (helper < 0 || helper >= IR::JnHelperMethodCount)
+    {
+        Assert(UNREACHED);
+        return E_ACCESSDENIED;
+    }
 
     return ServerCallWrapper(scriptContextInfo, [&]()->HRESULT
     {
@@ -519,11 +461,7 @@ ServerCloseScriptContext(
     return ServerCallWrapper(scriptContextInfo, [&]()->HRESULT
     {
 #ifdef PROFILE_EXEC
-        auto profiler = scriptContextInfo->GetCodeGenProfiler();
-        if (profiler && profiler->IsInitialized())
-        {
-            profiler->ProfilePrint(Js::Configuration::Global.flags.Profile.GetFirstPhase());
-        }
+        scriptContextInfo->GetFirstCodeGenProfiler()->ProfilePrint();
 #endif
         scriptContextInfo->Close();
         ServerContextManager::UnRegisterScriptContext(scriptContextInfo);
@@ -589,7 +527,7 @@ ServerNewInterpreterThunkBlock(
             ServerThreadContext * threadContext;
         } localAlloc(threadContext);
 
-        OOPEmitBufferManager * emitBufferManager = scriptContext->GetEmitBufferManager(thunkInput->asmJsThunk != FALSE);
+        OOPEmitBufferManagerWithLock * emitBufferManager = scriptContext->GetEmitBufferManager(thunkInput->asmJsThunk != FALSE);
 
         BYTE* runtimeAddress;
         EmitBufferAllocation<SectionAllocWrapper, PreReservedSectionAllocWrapper> * alloc = emitBufferManager->AllocateBuffer(InterpreterThunkEmitter::BlockSize, &runtimeAddress);
@@ -622,15 +560,15 @@ ServerNewInterpreterThunkBlock(
             &thunkCount
         );
 
-        emitBufferManager->CommitBufferForInterpreter(alloc, runtimeAddress, InterpreterThunkEmitter::BlockSize);
+        if (!emitBufferManager->CommitBufferForInterpreter(alloc, runtimeAddress, InterpreterThunkEmitter::BlockSize))
+        {
+            Js::Throw::OutOfMemory();
+        }
+
         // Call to set VALID flag for CFG check
         if (CONFIG_FLAG(OOPCFGRegistration))
         {
-            BYTE* callTarget = runtimeAddress;
-#ifdef _M_ARM
-            callTarget = (BYTE*)((uintptr_t)callTarget | 0x1); // Thumb-tag buffer to get actual callable value
-#endif
-            threadContext->SetValidCallTargetForCFG(callTarget);
+            emitBufferManager->SetValidCallTarget(alloc, runtimeAddress, true);
         }
 
         thunkOutput->thunkCount = thunkCount;
@@ -648,7 +586,7 @@ ServerNewInterpreterThunkBlock(
 HRESULT
 ServerIsInterpreterThunkAddr(
     /* [in] */ handle_t binding,
-    /* [in] */ PSCRIPTCONTEXT_HANDLE scriptContextInfoAddress,
+    /* [in] */ __RPC__in PSCRIPTCONTEXT_HANDLE scriptContextInfoAddress,
     /* [in] */ intptr_t address,
     /* [in] */ boolean asmjsThunk,
     /* [out] */ __RPC__out boolean * result)
@@ -660,7 +598,7 @@ ServerIsInterpreterThunkAddr(
         *result = false;
         return RPC_S_INVALID_ARG;
     }
-    OOPEmitBufferManager * manager = context->GetEmitBufferManager(asmjsThunk != FALSE);
+    OOPEmitBufferManagerWithLock * manager = context->GetEmitBufferManager(asmjsThunk != FALSE);
     if (manager == nullptr)
     {
         *result = false;
@@ -676,10 +614,10 @@ ServerIsInterpreterThunkAddr(
 HRESULT
 ServerFreeAllocation(
     /* [in] */ handle_t binding,
-    /* [in] */ __RPC__in PTHREADCONTEXT_HANDLE threadContextInfo,
+    /* [in] */ __RPC__in PSCRIPTCONTEXT_HANDLE scriptContextInfo,
     /* [in] */ intptr_t codeAddress)
 {
-    ServerThreadContext * context = (ServerThreadContext*)DecodePointer(threadContextInfo);
+    ServerScriptContext* context = (ServerScriptContext*)DecodePointer(scriptContextInfo);
 
     if (context == nullptr)
     {
@@ -709,7 +647,7 @@ ServerIsNativeAddr(
 
     *result = false;
 
-    ServerThreadContext * context = (ServerThreadContext*)DecodePointer(threadContextInfo);
+    ServerThreadContext* context = (ServerThreadContext*)DecodePointer(threadContextInfo);
     if (context == nullptr)
     {
         Assert(false);
@@ -822,13 +760,13 @@ ServerRemoteCodeGen(
             Output::Flush();
         }
 
-        auto profiler = scriptContextInfo->GetCodeGenProfiler();
 #ifdef PROFILE_EXEC
-        if (profiler && !profiler->IsInitialized())
-        {
-            profiler->Initialize(pageAllocator, nullptr);
-        }
+        Js::ScriptContextProfiler* profiler = scriptContextInfo->GetCodeGenProfiler(pageAllocator);
+#else
+        Js::ScriptContextProfiler* profiler = nullptr;
 #endif
+
+#if !FLOATVAR
         if (jitWorkItem->GetWorkItemData()->xProcNumberPageSegment)
         {
             jitData->numberPageSegments = (XProcNumberPageSegment*)midl_user_allocate(sizeof(XProcNumberPageSegment));
@@ -840,6 +778,7 @@ ServerRemoteCodeGen(
 
             memcpy_s(jitData->numberPageSegments, sizeof(XProcNumberPageSegment), jitWorkItem->GetWorkItemData()->xProcNumberPageSegment, sizeof(XProcNumberPageSegment));
         }
+#endif
 
         Func::Codegen(
             &jitArena,
@@ -850,7 +789,7 @@ ServerRemoteCodeGen(
             nullptr,
             nullptr,
             jitWorkItem->GetPolymorphicInlineCacheInfo(),
-            threadContextInfo->GetCodeGenAllocators(),
+            scriptContextInfo->GetCodeGenAllocators(),
 #if !FLOATVAR
             nullptr, // number allocator
 #endif

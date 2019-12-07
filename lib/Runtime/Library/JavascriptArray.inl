@@ -155,6 +155,7 @@ namespace Js
             DetermineInlineHeadSegmentPointer<T, InlinePropertySlots, false>(array);
         if(wasZeroAllocated)
         {
+            AssertOrFailFast(size <= SparseArraySegmentBase::INLINE_CHUNK_SIZE);
             if(length != 0)
             {
                 head->length = length;
@@ -238,6 +239,14 @@ namespace Js
                 DetermineAllocationSize<className, inlineSlots>(length, &allocationPlusSize, &alignedInlineElementSlots);
             }
 
+            // alignedInlineElementSlots is actually the 'size' of the segment. The size of the segment should not be greater than InlineHead segment limit, otherwise the inline
+            // segment may not be interpreted as inline segment if the length extends to the size.
+            // the size could increase because of allignment.
+            // Update the size so that it does not exceed SparseArraySegmentBase::INLINE_CHUNK_SIZE.
+
+            uint inlineChunkSize = SparseArraySegmentBase::INLINE_CHUNK_SIZE;
+            uint size = min(alignedInlineElementSlots, inlineChunkSize);
+
             array = RecyclerNewPlusZ(recycler, allocationPlusSize, className, length, arrayType);
 
             // An new array's head segment length is initialized to zero despite the array length being nonzero because the segment
@@ -250,9 +259,9 @@ namespace Js
             // a variable until it is fully initialized, there is no way for script code to use the array while it still has missing
             // values.
             SparseArraySegment<unitType> *head =
-                InitArrayAndHeadSegment<className, inlineSlots>(array, length, alignedInlineElementSlots, true);
+                InitArrayAndHeadSegment<className, inlineSlots>(array, length, size, true);
 
-            head->FillSegmentBuffer(length, alignedInlineElementSlots);
+            head->FillSegmentBuffer(length, size);
 
             Assert(array->HasNoMissingValues());
             return array;
@@ -471,12 +480,15 @@ namespace Js
 
     inline void JavascriptArray::GenericDirectSetItemAt(const uint32 index, Var newValue)
     {
+        newValue = CrossSite::MarshalVar(this->GetScriptContext(), newValue);
         this->DirectSetItemAt(index, newValue);
     }
 
     template<typename T>
     inline void JavascriptArray::DirectSetItemInLastUsedSegmentAt(const uint32 offset, const T newValue)
     {
+        Assert(!SparseArraySegment<T>::IsMissingItem(&newValue));
+
         SparseArraySegment<T> *const seg = (SparseArraySegment<T>*)GetLastUsedSegment();
         Assert(seg);
         Assert(offset < seg->size);
@@ -517,6 +529,8 @@ namespace Js
         const T newValue,
         StElemInfo *const stElemInfo)
     {
+        Assert(!SparseArraySegment<T>::IsMissingItem(&newValue));
+
         SparseArraySegment<T> *const seg = SparseArraySegment<T>::From(head);
         Assert(seg);
         Assert(offset < seg->size);
@@ -883,7 +897,7 @@ SECOND_PASS:
                         else if (!HasNoMissingValues())
                         {
                             // Have we overwritten all the missing values?
-                            if (!ScanForMissingValues<T>(0, startOffset))
+                            if (!ScanForMissingValues<T>(0, startOffset) && !ScanForMissingValues<T>(startOffset + length, current->length))
                             {
                                 SetHasNoMissingValues();
                             }
@@ -898,7 +912,7 @@ SECOND_PASS:
             {
                 isInlineSegment = JavascriptArray::IsInlineSegment(startSeg, this);
                 // startIndex is in between prev and startIndex
-                current = SparseArraySegment<T>::template AllocateSegmentImpl<false>(recycler, startIndex, length, (SparseArraySegmentBase*)nullptr);
+                current = SparseArraySegment<T>::template AllocateSegmentImpl<false>(recycler, startIndex, length, nullptr);
                 LinkSegments((Js::SparseArraySegment<T>*)startPrev, current);
                 if (current == head)
                 {
@@ -965,12 +979,12 @@ SECOND_PASS:
                             LinkSegments((Js::SparseArraySegment<T>*)startPrev, current);
                             current->length = startOffset + length + growby;
                             current->CheckLengthvsSize();
-                        }
-                        if (current == head && HasNoMissingValues())
-                        {
-                            if (ScanForMissingValues<T>(startOffset + length, current->length))
+                            if (current == head && HasNoMissingValues())
                             {
-                                SetHasNoMissingValues(false);
+                                if (ScanForMissingValues<T>(startOffset + length, current->length))
+                                {
+                                    SetHasNoMissingValues(false);
+                                }
                             }
                         }
                     }
@@ -1066,7 +1080,7 @@ SECOND_PASS:
 
         const auto isSegmentValid = [length](Js::SparseArraySegment<T>* segment, uint32 startIndex) {
             uint32 end, segmentEnd;
-            // Check the segment is int32 enough
+            // Check the segment is big enough
             return (
                 segment &&
                 !UInt32Math::Add(startIndex, length, &end) &&
@@ -1076,8 +1090,8 @@ SECOND_PASS:
                 segmentEnd >= end
             );
         };
-        //Find the segment where itemIndex is present or is at the boundary
-        Js::SparseArraySegment<T>* fromSegment = (Js::SparseArraySegment<T>*)fromArray->GetBeginLookupSegment(fromStartIndex, false);
+        // Check if the head segment of the fromArray has everything we need to copy
+        Js::SparseArraySegment<T>* fromSegment = (Js::SparseArraySegment<T>*)fromArray->GetHead();
         if (!isSegmentValid(fromSegment, fromStartIndex))
         {
             return false;
@@ -1210,6 +1224,8 @@ SECOND_PASS:
     template<typename T>
     void JavascriptArray::DirectSetItem_Full(uint32 itemIndex, T newValue)
     {
+        Assert(!SparseArraySegment<T>::IsMissingItem(&newValue));
+
         DebugOnly(VerifyNotNeedMarshal(newValue));
         this->EnsureHead<T>();
         AnalysisAssert(head);

@@ -40,7 +40,7 @@ namespace TTD
 
         if(Js::DynamicType::Is(obj->GetTypeId()))
         {
-            Js::DynamicObject* dynObj = Js::DynamicObject::FromVar(obj);
+            Js::DynamicObject* dynObj = Js::VarTo<Js::DynamicObject>(obj);
 
             dynObj->GetDynamicType()->GetTypeHandler()->MarkObjectSlots_TTD(this, dynObj);
 
@@ -247,7 +247,7 @@ namespace TTD
     void SnapshotExtractor::MarkVisitVar(Js::Var var)
     {
         TTDAssert(var != nullptr, "I don't think this should happen but not 100% sure.");
-        TTDAssert(Js::JavascriptOperators::GetTypeId(var) < Js::TypeIds_Limit || Js::RecyclableObject::FromVar(var)->IsExternal(), "Not cool.");
+        TTDAssert(Js::JavascriptOperators::GetTypeId(var) < Js::TypeIds_Limit || Js::VarTo<Js::RecyclableObject>(var)->IsExternal(), "Not cool.");
 
         //We don't need to visit tagged things
         if(JsSupport::IsVarTaggedInline(var))
@@ -259,7 +259,7 @@ namespace TTD
         {
             if(this->m_marks.MarkAndTestAddr<MarkTableTag::PrimitiveObjectTag>(var))
             {
-                Js::RecyclableObject* obj = Js::RecyclableObject::FromVar(var);
+                Js::RecyclableObject* obj = Js::VarTo<Js::RecyclableObject>(var);
                 this->MarkVisitType(obj->GetType());
             }
         }
@@ -269,12 +269,12 @@ namespace TTD
 
             if(this->m_marks.MarkAndTestAddr<MarkTableTag::CompoundObjectTag>(var))
             {
-                Js::RecyclableObject* obj = Js::RecyclableObject::FromVar(var);
+                Js::RecyclableObject* obj = Js::VarTo<Js::RecyclableObject>(var);
 
                 //do this here instead of in mark visit type as it wants the dynamic object as well
                 if(Js::DynamicType::Is(obj->GetTypeId()))
                 {
-                    Js::DynamicObject* dynObj = Js::DynamicObject::FromVar(obj);
+                    Js::DynamicObject* dynObj = Js::VarTo<Js::DynamicObject>(obj);
                     if(dynObj->GetDynamicType()->GetTypeHandler()->IsDeferredTypeHandler())
                     {
                         dynObj->GetDynamicType()->GetTypeHandler()->EnsureObjectReady(dynObj);
@@ -395,7 +395,7 @@ namespace TTD
         threadContext->TTDContext->LoadInvertedRootMap(objToLogIdMap);
 
         //We extract all the global code function bodies with the context so clear their marks now
-        for(int32 i = 0; i < threadContext->TTDContext->GetTTDContexts().Count(); ++i)
+        for (int32 i = 0; i < threadContext->TTDContext->GetTTDContexts().Count(); ++i)
         {
             JsUtil::List<TopLevelFunctionInContextRelation, HeapAllocator> topLevelScriptLoad(&HeapAllocator::Instance);
             JsUtil::List<TopLevelFunctionInContextRelation, HeapAllocator> topLevelNewFunction(&HeapAllocator::Instance);
@@ -404,30 +404,30 @@ namespace TTD
             Js::ScriptContext* ctx = threadContext->TTDContext->GetTTDContexts().Item(i);
             ctx->TTDContextInfo->GetLoadedSources(nullptr, topLevelScriptLoad, topLevelNewFunction, topLevelEval);
 
-            for(int32 j = 0; j < topLevelScriptLoad.Count(); ++j)
+            for (int32 j = 0; j < topLevelScriptLoad.Count(); ++j)
             {
                 Js::FunctionBody* body = TTD_COERCE_PTR_ID_TO_FUNCTIONBODY(topLevelScriptLoad.Item(j).ContextSpecificBodyPtrId);
-                if(this->m_marks.IsMarked(body))
+                if (this->m_marks.IsMarked(body))
                 {
                     liveTopLevelBodies.Add(body);
                     this->m_marks.ClearMark(body);
                 }
             }
 
-            for(int32 j = 0; j < topLevelNewFunction.Count(); ++j)
+            for (int32 j = 0; j < topLevelNewFunction.Count(); ++j)
             {
                 Js::FunctionBody* body = TTD_COERCE_PTR_ID_TO_FUNCTIONBODY(topLevelNewFunction.Item(j).ContextSpecificBodyPtrId);
-                if(this->m_marks.IsMarked(body))
+                if (this->m_marks.IsMarked(body))
                 {
                     liveTopLevelBodies.Add(body);
                     this->m_marks.ClearMark(body);
                 }
             }
 
-            for(int32 j = 0; j < topLevelEval.Count(); ++j)
+            for (int32 j = 0; j < topLevelEval.Count(); ++j)
             {
                 Js::FunctionBody* body = TTD_COERCE_PTR_ID_TO_FUNCTIONBODY(topLevelEval.Item(j).ContextSpecificBodyPtrId);
-                if(this->m_marks.IsMarked(body))
+                if (this->m_marks.IsMarked(body))
                 {
                     liveTopLevelBodies.Add(body);
                     this->m_marks.ClearMark(body);
@@ -476,7 +476,7 @@ namespace TTD
             case MarkTableTag::CompoundObjectTag:
             {
                 this->ExtractTypeIfNeeded(this->m_marks.GetPtrValue<Js::RecyclableObject*>()->GetType(), threadContext);
-                if(Js::ScriptFunction::Is(this->m_marks.GetPtrValue<Js::RecyclableObject*>()))
+                if(Js::VarIs<Js::ScriptFunction>(this->m_marks.GetPtrValue<Js::RecyclableObject*>()))
                 {
                     this->ExtractScriptFunctionEnvironmentIfNeeded(this->m_marks.GetPtrValue<Js::ScriptFunction*>());
                 }

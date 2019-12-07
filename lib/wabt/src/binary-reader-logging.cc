@@ -76,10 +76,18 @@ void BinaryReaderLogging::WriteIndent() {
   }
 }
 
+void BinaryReaderLogging::LogType(Type type) {
+  if (IsTypeIndex(type)) {
+    LOGF_NOINDENT("funcidx[%d]", static_cast<int>(type));
+  } else {
+    LOGF_NOINDENT("%s", GetTypeName(type));
+  }
+}
+
 void BinaryReaderLogging::LogTypes(Index type_count, Type* types) {
   LOGF_NOINDENT("[");
   for (Index i = 0; i < type_count; ++i) {
-    LOGF_NOINDENT("%s", GetTypeName(types[i]));
+    LogType(types[i]);
     if (i != type_count - 1) {
       LOGF_NOINDENT(", ");
     }
@@ -91,8 +99,8 @@ void BinaryReaderLogging::LogTypes(TypeVector& types) {
   LogTypes(types.size(), types.data());
 }
 
-bool BinaryReaderLogging::OnError(const char* message) {
-  return reader_->OnError(message);
+bool BinaryReaderLogging::OnError(const Error& error) {
+  return reader_->OnError(error);
 }
 
 void BinaryReaderLogging::OnSetState(const State* s) {
@@ -246,6 +254,11 @@ Result BinaryReaderLogging::OnExport(Index index,
   return reader_->OnExport(index, kind, item_index, name);
 }
 
+Result BinaryReaderLogging::BeginFunctionBody(Index value, Offset size) {
+  LOGF("BeginFunctionBody(%" PRIindex ", size:%" PRIzd ")\n", value, size);
+  return reader_->BeginFunctionBody(value, size);
+}
+
 Result BinaryReaderLogging::OnLocalDecl(Index decl_index,
                                         Index count,
                                         Type type) {
@@ -254,11 +267,11 @@ Result BinaryReaderLogging::OnLocalDecl(Index decl_index,
   return reader_->OnLocalDecl(decl_index, count, type);
 }
 
-Result BinaryReaderLogging::OnBlockExpr(Index num_types, Type* sig_types) {
+Result BinaryReaderLogging::OnBlockExpr(Type sig_type) {
   LOGF("OnBlockExpr(sig: ");
-  LogTypes(num_types, sig_types);
+  LogType(sig_type);
   LOGF_NOINDENT(")\n");
-  return reader_->OnBlockExpr(num_types, sig_types);
+  return reader_->OnBlockExpr(sig_type);
 }
 
 Result BinaryReaderLogging::OnBrExpr(Index depth) {
@@ -323,34 +336,32 @@ Result BinaryReaderLogging::OnI64ConstExpr(uint64_t value) {
   return reader_->OnI64ConstExpr(value);
 }
 
-Result BinaryReaderLogging::OnIfExpr(Index num_types, Type* sig_types) {
+Result BinaryReaderLogging::OnIfExpr(Type sig_type) {
   LOGF("OnIfExpr(sig: ");
-  LogTypes(num_types, sig_types);
+  LogType(sig_type);
   LOGF_NOINDENT(")\n");
-  return reader_->OnIfExpr(num_types, sig_types);
+  return reader_->OnIfExpr(sig_type);
 }
 
-Result BinaryReaderLogging::OnIfExceptExpr(Index num_types,
-                                           Type* sig_types,
-                                           Index except_index) {
+Result BinaryReaderLogging::OnIfExceptExpr(Type sig_type, Index except_index) {
   LOGF("OnIfExceptExpr(sig: ");
-  LogTypes(num_types, sig_types);
+  LogType(sig_type);
   LOGF_NOINDENT(", except: %" PRIindex ")\n", except_index);
-  return reader_->OnIfExceptExpr(num_types, sig_types, except_index);
+  return reader_->OnIfExceptExpr(sig_type, except_index);
 }
 
-Result BinaryReaderLogging::OnLoopExpr(Index num_types, Type* sig_types) {
+Result BinaryReaderLogging::OnLoopExpr(Type sig_type) {
   LOGF("OnLoopExpr(sig: ");
-  LogTypes(num_types, sig_types);
+  LogType(sig_type);
   LOGF_NOINDENT(")\n");
-  return reader_->OnLoopExpr(num_types, sig_types);
+  return reader_->OnLoopExpr(sig_type);
 }
 
-Result BinaryReaderLogging::OnTryExpr(Index num_types, Type* sig_types) {
+Result BinaryReaderLogging::OnTryExpr(Type sig_type) {
   LOGF("OnTryExpr(sig: ");
-  LogTypes(num_types, sig_types);
+  LogType(sig_type);
   LOGF_NOINDENT(")\n");
-  return reader_->OnTryExpr(num_types, sig_types);
+  return reader_->OnTryExpr(sig_type);
 }
 
 Result BinaryReaderLogging::OnSimdLaneOpExpr(Opcode opcode, uint64_t value) {
@@ -370,6 +381,21 @@ Result BinaryReaderLogging::OnDataSegmentData(Index index,
   LOGF("OnDataSegmentData(index:%" PRIindex ", size:%" PRIaddress ")\n", index,
        size);
   return reader_->OnDataSegmentData(index, data, size);
+}
+
+Result BinaryReaderLogging::OnModuleNameSubsection(Index index,
+                                                   uint32_t name_type,
+                                                   Offset subsection_size) {
+  LOGF("OnModuleNameSubsection(index:%" PRIindex ", nametype:%u, size:%" PRIzd
+       ")\n",
+       index, name_type, subsection_size);
+  return reader_->OnModuleNameSubsection(index, name_type, subsection_size);
+}
+
+Result BinaryReaderLogging::OnModuleName(string_view name) {
+  LOGF("OnModuleName(name: \"" PRIstringview "\")\n",
+       WABT_PRINTF_STRING_VIEW_ARG(name));
+  return reader_->OnModuleName(name);
 }
 
 Result BinaryReaderLogging::OnFunctionNameSubsection(Index index,
@@ -447,14 +473,28 @@ Result BinaryReaderLogging::OnInitExprI64ConstExpr(Index index,
   return reader_->OnInitExprI64ConstExpr(index, value);
 }
 
+Result BinaryReaderLogging::OnDylinkInfo(uint32_t mem_size,
+                                         uint32_t mem_align,
+                                         uint32_t table_size,
+                                         uint32_t table_align) {
+  LOGF(
+      "OnDylinkInfo(mem_size: %u, mem_align: %u, table_size: %u, table_align: "
+      "%u)\n",
+      mem_size, mem_align, table_size, table_align);
+  return reader_->OnDylinkInfo(mem_size, mem_align, table_size, table_align);
+}
+
+Result BinaryReaderLogging::OnDylinkNeeded(string_view so_name) {
+  LOGF("OnDylinkNeeded(name: " PRIstringview ")\n",
+       WABT_PRINTF_STRING_VIEW_ARG(so_name));
+  return reader_->OnDylinkNeeded(so_name);
+}
+
 Result BinaryReaderLogging::OnRelocCount(Index count,
-                                         BinarySection section_code,
-                                         string_view section_name) {
-  LOGF("OnRelocCount(count: %" PRIindex
-       ", section: %s, section_name: " PRIstringview ")\n",
-       count, GetSectionName(section_code),
-       WABT_PRINTF_STRING_VIEW_ARG(section_name));
-  return reader_->OnRelocCount(count, section_code, section_name);
+                                         Index section_index) {
+  LOGF("OnRelocCount(count: %" PRIindex ", section: %" PRIindex ")\n", count,
+       section_index);
+  return reader_->OnRelocCount(count, section_index);
 }
 
 Result BinaryReaderLogging::OnReloc(RelocType type,
@@ -493,7 +533,7 @@ Result BinaryReaderLogging::OnFunctionSymbol(Index index,
   LOGF("OnFunctionSymbol(name: " PRIstringview " flags: 0x%x index: %" PRIindex
        ")\n",
        WABT_PRINTF_STRING_VIEW_ARG(name), flags, func_index);
-  return reader_->OnGlobalSymbol(index, flags, name, func_index);
+  return reader_->OnFunctionSymbol(index, flags, name, func_index);
 }
 
 Result BinaryReaderLogging::OnGlobalSymbol(Index index,
@@ -504,6 +544,14 @@ Result BinaryReaderLogging::OnGlobalSymbol(Index index,
        ")\n",
        WABT_PRINTF_STRING_VIEW_ARG(name), flags, global_index);
   return reader_->OnGlobalSymbol(index, flags, name, global_index);
+}
+
+Result BinaryReaderLogging::OnSectionSymbol(Index index,
+                                            uint32_t flags,
+                                            Index section_index) {
+  LOGF("OnSectionSymbol(flags: 0x%x index: %" PRIindex ")\n", flags,
+       section_index);
+  return reader_->OnSectionSymbol(index, flags, section_index);
 }
 
 Result BinaryReaderLogging::OnSegmentInfo(Index index,
@@ -553,6 +601,14 @@ Result BinaryReaderLogging::OnInitFunction(uint32_t priority,
     LOGF(#name "(" desc0 ": %" PRIindex ", " desc1 ": %" PRIindex ")\n", \
          value0, value1);                                                \
     return reader_->name(value0, value1);                                \
+  }
+
+#define DEFINE_INDEX_INDEX_BOOL(name, desc0, desc1, desc2)                     \
+  Result BinaryReaderLogging::name(Index value0, Index value1, bool value2) {  \
+    LOGF(#name "(" desc0 ": %" PRIindex ", " desc1 ": %" PRIindex              \
+               ", " desc2 ": %s)\n",                                           \
+         value0, value1, value2 ? "true" : "false");                           \
+    return reader_->name(value0, value1, value2);                              \
   }
 
 #define DEFINE_OPCODE(name)                                            \
@@ -618,7 +674,6 @@ DEFINE_END(EndStartSection)
 
 DEFINE_BEGIN(BeginCodeSection)
 DEFINE_INDEX(OnFunctionBodyCount)
-DEFINE_INDEX(BeginFunctionBody)
 DEFINE_INDEX(EndFunctionBody)
 DEFINE_INDEX(OnLocalDeclCount)
 DEFINE_LOAD_STORE_OPCODE(OnAtomicLoadExpr);
@@ -633,16 +688,26 @@ DEFINE_INDEX_DESC(OnCallIndirectExpr, "sig_index")
 DEFINE0(OnCatchExpr);
 DEFINE_OPCODE(OnCompareExpr)
 DEFINE_OPCODE(OnConvertExpr)
-DEFINE0(OnCurrentMemoryExpr)
 DEFINE0(OnDropExpr)
 DEFINE0(OnElseExpr)
 DEFINE0(OnEndExpr)
 DEFINE_INDEX_DESC(OnGetGlobalExpr, "index")
 DEFINE_INDEX_DESC(OnGetLocalExpr, "index")
-DEFINE0(OnGrowMemoryExpr)
 DEFINE_LOAD_STORE_OPCODE(OnLoadExpr);
+DEFINE0(OnMemoryCopyExpr)
+DEFINE_INDEX(OnMemoryDropExpr)
+DEFINE0(OnMemoryFillExpr)
+DEFINE0(OnMemoryGrowExpr)
+DEFINE_INDEX(OnMemoryInitExpr)
+DEFINE0(OnMemorySizeExpr)
+DEFINE0(OnTableCopyExpr)
+DEFINE_INDEX(OnTableDropExpr)
+DEFINE_INDEX(OnTableInitExpr)
 DEFINE0(OnNopExpr)
 DEFINE0(OnRethrowExpr);
+DEFINE_INDEX_DESC(OnReturnCallExpr, "func_index")
+
+    DEFINE_INDEX_DESC(OnReturnCallIndirectExpr, "sig_index")
 DEFINE0(OnReturnExpr)
 DEFINE0(OnSelectExpr)
 DEFINE_INDEX_DESC(OnSetGlobalExpr, "index")
@@ -657,7 +722,7 @@ DEFINE_END(EndCodeSection)
 
 DEFINE_BEGIN(BeginElemSection)
 DEFINE_INDEX(OnElemSegmentCount)
-DEFINE_INDEX_INDEX(BeginElemSegment, "index", "table_index")
+DEFINE_INDEX_INDEX_BOOL(BeginElemSegment, "index", "table_index", "passive")
 DEFINE_INDEX(BeginElemSegmentInitExpr)
 DEFINE_INDEX(EndElemSegmentInitExpr)
 DEFINE_INDEX_INDEX(OnElemSegmentFunctionIndexCount, "index", "count")
@@ -667,7 +732,7 @@ DEFINE_END(EndElemSection)
 
 DEFINE_BEGIN(BeginDataSection)
 DEFINE_INDEX(OnDataSegmentCount)
-DEFINE_INDEX_INDEX(BeginDataSegment, "index", "memory_index")
+DEFINE_INDEX_INDEX_BOOL(BeginDataSegment, "index", "memory_index", "passive")
 DEFINE_INDEX(BeginDataSegmentInitExpr)
 DEFINE_INDEX(EndDataSegmentInitExpr)
 DEFINE_INDEX(EndDataSegment)
@@ -683,10 +748,12 @@ DEFINE_BEGIN(BeginRelocSection)
 DEFINE_END(EndRelocSection)
 DEFINE_INDEX_INDEX(OnInitExprGetGlobalExpr, "index", "global_index")
 
+DEFINE_BEGIN(BeginDylinkSection)
+DEFINE_INDEX(OnDylinkNeededCount)
+DEFINE_END(EndDylinkSection)
+
 DEFINE_BEGIN(BeginLinkingSection)
 DEFINE_INDEX(OnSymbolCount)
-DEFINE_INDEX(OnStackGlobal)
-DEFINE_INDEX(OnDataSize)
 DEFINE_INDEX(OnSegmentInfoCount)
 DEFINE_INDEX(OnInitFunctionCount)
 DEFINE_END(EndLinkingSection)
@@ -735,8 +802,8 @@ Result BinaryReaderLogging::OnOpcodeV128(v128 value) {
   return reader_->OnOpcodeV128(value);
 }
 
-Result BinaryReaderLogging::OnOpcodeBlockSig(Index num_types, Type* sig_types) {
-  return reader_->OnOpcodeBlockSig(num_types, sig_types);
+Result BinaryReaderLogging::OnOpcodeBlockSig(Type sig_type) {
+  return reader_->OnOpcodeBlockSig(sig_type);
 }
 
 Result BinaryReaderLogging::OnEndFunc() {

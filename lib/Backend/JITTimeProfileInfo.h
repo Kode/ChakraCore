@@ -34,6 +34,7 @@ public:
     Js::ImplicitCallFlags GetLoopImplicitCallFlags(uint loopNum) const;
     Js::ImplicitCallFlags GetImplicitCallFlags() const;
     Js::LoopFlags GetLoopFlags(uint loopNum) const;
+    bool CanInlineCallback(Js::ArgSlot argIndex, Js::ProfileId callSiteId) const;
 
     uint GetLoopCount() const;
 
@@ -67,6 +68,7 @@ public:
     bool IsPowIntIntTypeSpecDisabled() const;
     bool IsTagCheckDisabled() const;
     bool IsOptimizeTryFinallyDisabled() const;
+    bool IsFieldPREDisabled() const;
 
 private:
     enum ProfileDataFlags : int64
@@ -108,7 +110,8 @@ private:
         Flags_disableLoopImplicitCallInfo = 1ll << 33,
         Flags_disablePowIntIntTypeSpec = 1ll << 34,
         Flags_disableTagCheck = 1ll << 35,
-        Flags_disableOptimizeTryFinally = 1ll << 36
+        Flags_disableOptimizeTryFinally = 1ll << 36,
+        Flags_disableFieldPRE = 1ll << 37
     };
 
     Js::ProfileId GetProfiledArrayCallSiteCount() const;
@@ -124,6 +127,8 @@ private:
     bool TestFlag(ProfileDataFlags flag) const;
 
     Js::CallSiteInfo * GetCallSiteInfo() const;
+    Js::CallbackInfo * GetCallbackInfo() const;
+    Js::CallbackInfo * FindCallbackInfo(Js::ProfileId callSiteId) const;
 
     ProfileDataIDL m_profileData;
 };

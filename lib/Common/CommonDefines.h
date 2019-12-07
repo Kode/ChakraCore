@@ -12,6 +12,10 @@
 #include "Warnings.h"
 #include "ChakraCoreVersion.h"
 
+// CFG was never enabled for ARM32 and requires WIN10 SDK
+#if !defined(_M_ARM) && defined(_WIN32) && defined(NTDDI_WIN10)
+#define _CONTROL_FLOW_GUARD 1
+#endif
 
 //----------------------------------------------------------------------------------------------------
 // Default debug/fretest/release flags values
@@ -132,8 +136,9 @@
 // Language features
 #if !defined(CHAKRACORE_LITE) && (defined(_WIN32) || defined(INTL_ICU))
 #define ENABLE_INTL_OBJECT                          // Intl support
-#define ENABLE_JS_BUILTINS                          // Built In functions support
 #endif
+
+#define ENABLE_JS_BUILTINS                          // Built In functions support
 
 #if defined(_WIN32) && !defined(HAS_ICU)
 #define INTL_WINGLOB 1
@@ -157,10 +162,10 @@
 #ifdef _WIN32
 // dep: TIME_ZONE_INFORMATION, DaylightTimeHelper, Windows.Globalization
 #define ENABLE_GLOBALIZATION
+// dep: IActiveScriptProfilerCallback, IActiveScriptProfilerHeapEnum
 // #ifndef __clang__
 // xplat-todo: change DISABLE_SEH to ENABLE_SEH and move here
 // #endif
-
 #define ENABLE_CUSTOM_ENTROPY
 #endif
 
@@ -178,14 +183,15 @@
 #endif
 
 #if defined(NTBUILD) || defined(ENABLE_DEBUG_CONFIG_OPTIONS)
-#define RECYCLER_PAGE_HEAP                          // PageHeap support, on by default, off in ChakraCore release build
+#define RECYCLER_PAGE_HEAP                          // PageHeap support
 #endif
 
+#define USE_FEWER_PAGES_PER_BLOCK 1
 
 #ifndef ENABLE_VALGRIND
 #define ENABLE_CONCURRENT_GC 1
 #ifdef _WIN32
-#define ENABLE_ALLOCATIONS_DURING_CONCURRENT_SWEEP 1 // Needs ENABLE_CONCURRENT_GC to be enabled for this to be enabled.
+#define ENABLE_ALLOCATIONS_DURING_CONCURRENT_SWEEP 1 // Only takes effect when ENABLE_CONCURRENT_GC is enabled.
 #else
 #define ENABLE_ALLOCATIONS_DURING_CONCURRENT_SWEEP 0 // Needs ENABLE_CONCURRENT_GC to be enabled for this to be enabled.
 #endif
@@ -211,7 +217,7 @@
 #define USE_VPM_TABLE 1
 #endif
 
-// xplat-todo: fix up vpm.64b.h generation to generate correctly
+
 // templatized code
 #if defined(_MSC_VER) && !defined(__clang__)
 #define USE_STATIC_VPM 1 // Disable to force generation at runtime
@@ -262,7 +268,12 @@
 #define RECYCLER_VISITED_HOST
 #endif
 
+
+#define ENABLE_WEAK_REFERENCE_REGIONS 1
+
 // JIT features
+
+#define ENABLE_SPECTRE_RUNTIME_MITIGATIONS
 
 #if DISABLE_JIT
 #define ENABLE_NATIVE_CODEGEN 0
@@ -312,7 +323,9 @@
 #endif
 
 // Other features
-// #define CHAKRA_CORE_DOWN_COMPAT 1
+#if defined(_CHAKRACOREBUILD)
+# define CHAKRA_CORE_DOWN_COMPAT 1
+#endif
 
 // todo:: Enable vectorcall on NTBUILD. OS#13609380
 #if defined(_WIN32) && !defined(NTBUILD) && defined(_M_IX86)
@@ -339,6 +352,7 @@
 #define ENABLE_FOUNDATION_OBJECT
 #define ENABLE_EXPERIMENTAL_FLAGS
 #define ENABLE_WININET_PROFILE_DATA_CACHE
+#define ENABLE_COMPRESSION_UTILITIES
 #define ENABLE_BASIC_TELEMETRY
 #define ENABLE_DOM_FAST_PATH
 #define EDIT_AND_CONTINUE
@@ -444,7 +458,7 @@
 #endif
 
 #if ENABLE_TTD
-#define TTDAssert(C, M) { if(!(C)) TTDAbort_fatal_error(M); }
+#define TTDAssert(C, M) { if(!(C)) TTDAbort_unrecoverable_error(M); }
 #else
 #define TTDAssert(C, M)
 #endif
@@ -523,6 +537,7 @@
 
 #ifdef DBG
 #define VALIDATE_ARRAY
+#define ENABLE_ENTRYPOINT_CLEANUP_TRACE 1
 
 // xplat-todo: Do we need dump generation for non-Win32 platforms?
 #ifdef _WIN32

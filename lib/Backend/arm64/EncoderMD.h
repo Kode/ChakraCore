@@ -161,9 +161,9 @@ public:
     void            ApplyRelocs(size_t codeBufferAddress, size_t codeSize, uint* bufferCRC, BOOL isBrShorteningSucceeded, bool isFinalBufferValidation = false);
     static bool     TryConstFold(IR::Instr *instr, IR::RegOpnd *regOpnd);
     static bool     TryFold(IR::Instr *instr, IR::RegOpnd *regOpnd);
-    const BYTE      GetRegEncode(IR::RegOpnd *regOpnd);
-    const BYTE      GetFloatRegEncode(IR::RegOpnd *regOpnd);
-    static const BYTE GetRegEncode(RegNum reg);
+    BYTE            GetRegEncode(IR::RegOpnd *regOpnd);
+    BYTE            GetFloatRegEncode(IR::RegOpnd *regOpnd);
+    static BYTE     GetRegEncode(RegNum reg);
     static uint32   GetOpdope(IR::Instr *instr);
     static uint32   GetOpdope(Js::OpCode op);
 
@@ -256,4 +256,5 @@ private:
     template<typename _LoadStoreFunc> int EmitLoadStoreFp(Arm64CodeEmitter &Emitter, IR::Instr* instr, IR::Opnd* memOpnd, IR::Opnd* srcDstOpnd, _LoadStoreFunc loadStore);
     template<typename _LoadStoreFunc> int EmitLoadStoreFpPair(Arm64CodeEmitter &Emitter, IR::Instr* instr, IR::Opnd* memOpnd, IR::Opnd* srcDst1Opnd, IR::Opnd* srcDst2Opnd, _LoadStoreFunc loadStore);
     template<typename _Int32Func, typename _Uint32Func, typename _Int64Func, typename _Uint64Func> int EmitConvertToInt(Arm64CodeEmitter &Emitter, IR::Instr* instr, _Int32Func toInt32, _Uint32Func toUint32, _Int64Func toInt64, _Uint64Func toUint64);
+    template<typename _Emitter> int EmitConditionalSelectFp(Arm64CodeEmitter &Emitter, IR::Instr *instr, int condition, _Emitter emitter);
 };

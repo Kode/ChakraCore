@@ -11,12 +11,6 @@
 #define TypeHasAuxSlotTag(_t) \
     (!!(reinterpret_cast<size_t>(_t) & InlineCacheAuxSlotTypeTag))
 
-#if defined(TARGET_32)
-#define PolymorphicInlineCacheShift 5 // On 32 bit architectures, the least 5 significant bits of a DynamicTypePointer is 0
-#else
-#define PolymorphicInlineCacheShift 6 // On 64 bit architectures, the least 6 significant bits of a DynamicTypePointer is 0
-#endif
-
 // forward decl
 class JITType;
 struct InlineCacheData;
@@ -436,11 +430,11 @@ namespace Js
                 RecyclableObject * function;
                 if (cache->u.accessor.isOnProto)
                 {
-                    function = RecyclableObject::UnsafeFromVar(cache->GetPropertyValue<slotType>(cache->u.accessor.object, cache->u.accessor.slotIndex));
+                    function = UnsafeVarTo<RecyclableObject>(cache->GetPropertyValue<slotType>(cache->u.accessor.object, cache->u.accessor.slotIndex));
                 }
                 else
                 {
-                    function = RecyclableObject::UnsafeFromVar(cache->GetPropertyValue<slotType>(DynamicObject::UnsafeFromVar(propertyObject), cache->u.accessor.slotIndex));
+                    function = UnsafeVarTo<RecyclableObject>(cache->GetPropertyValue<slotType>(UnsafeVarTo<DynamicObject>(propertyObject), cache->u.accessor.slotIndex));
                 }
 
                 *propertyValue = JavascriptOperators::CallGetter(function, instance, requestContext);
@@ -464,8 +458,18 @@ namespace Js
                 ScriptContext *const requestContext)
             {
                 *propertyValue = InlineCache::GetPropertyValue<slotType>(cache->GetSourceObject<cacheType>(propertyObject), cache->GetSlotIndex<cacheType>());
-                Assert(*propertyValue == JavascriptOperators::GetProperty(propertyObject, propertyId, requestContext) ||
-                    (RootObjectBase::Is(propertyObject) && *propertyValue == JavascriptOperators::GetRootProperty(propertyObject, propertyId, requestContext)));
+#if DBG
+                Var slowPathValue = JavascriptOperators::GetProperty(propertyObject, propertyId, requestContext);
+                Var rootObjectValue = nullptr;
+                if (VarIs<RootObjectBase>(propertyObject))
+                {
+                    rootObjectValue = JavascriptOperators::GetRootProperty(propertyObject, propertyId, requestContext);
+                }
+                Assert(*propertyValue == slowPathValue ||
+                    (VarIs<RootObjectBase>(propertyObject) && *propertyValue == rootObjectValue) ||
+                    // In some cases, such as CustomExternalObject, if implicit calls are disabled GetPropertyQuery may return null. See CustomExternalObject::GetPropertyQuery for an example.
+                    (slowPathValue == requestContext->GetLibrary()->GetNull() && requestContext->GetThreadContext()->IsDisableImplicitCall() && propertyObject->GetType()->IsExternal()));
+#endif
             }
         };
     };
@@ -479,7 +483,7 @@ namespace Js
     CompileAssert(sizeof(InlineCache) == sizeof(InlineCacheAllocator::CacheLayout));
     CompileAssert(offsetof(InlineCache, invalidationListSlotPtr) == offsetof(InlineCacheAllocator::CacheLayout, strongRef));
 
-    class PolymorphicInlineCache _ABSTRACT : public FinalizableObject
+    class PolymorphicInlineCache : public FinalizableObject
     {
         DECLARE_RECYCLER_VERIFY_MARK_FRIEND()
 #ifdef INLINE_CACHE_STATS

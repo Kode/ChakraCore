@@ -8,10 +8,20 @@
 #pragma warning(disable: 28252)
 #pragma warning(disable: 28253)
 
-#ifdef NDEBUG
+// HACK HACK HACK
+// MIDL gives compile error if using [system_handle] with stub targetting win8 or below,
+// but there is no issue unless the function using [system_handle] is actually called.
+// We have runtime check that prevents that function from being used on old OS,
+// so change #define here to bypass the error
+#if !(0x603 <= _WIN32_WINNT)
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x603
+#endif
+
+ NDEBUG
 #include "Release/ChakraJIT_c.c"
 #else
 #include "Debug/ChakraJIT_c.c"
-#endif
+#endi
 
 #pragma warning(pop)

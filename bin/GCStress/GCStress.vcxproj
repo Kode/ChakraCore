@@ -31,8 +31,11 @@
         $(ChakraCommonMemoryLib);
         $(ChakraRuntimePlatformAgnostic);
         $(ChakraCommonLinkDependencies);
+        Ole32.lib;
+        Rpcrt4.lib;
         Advapi32.lib;
-        %(AdditionalDependencies)</AdditionalDependencies>
+        %(AdditionalDependencies)
+      </AdditionalDependencies>
       <AdditionalLibraryDirectories>$(OutDir);%(AdditionalLibraryDirectories);$(SdkLibPath)</AdditionalLibraryDirectories>
       <SubSystem>Console</SubSystem>
     </Link>

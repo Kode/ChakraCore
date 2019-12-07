@@ -24,6 +24,7 @@ endif()
 set(CRLIB_SOURCE_CODES
     ArgumentsObject.cpp
     ArgumentsObjectEnumerator.cpp
+    DelayFreeArrayBufferHelper.cpp
     ArrayBuffer.cpp
     AtomicsOperations.cpp
     AtomicsObject.cpp
@@ -32,6 +33,7 @@ set(CRLIB_SOURCE_CODES
     CommonExternalApiImpl.cpp
     CompoundString.cpp
     ConcatString.cpp
+    CustomExternalWrapperObject.cpp
     DataView.cpp
     DateImplementation.cpp
     ES5Array.cpp
@@ -45,7 +47,6 @@ set(CRLIB_SOURCE_CODES
     JSONParser.cpp
     JSONScanner.cpp
     JSONStack.cpp
-    JSONString.cpp
     JSONStringBuilder.cpp
     JSONStringifier.cpp
     JavascriptArray.cpp
@@ -53,6 +54,7 @@ set(CRLIB_SOURCE_CODES
     JavascriptArrayIndexEnumeratorBase.cpp
     JavascriptArrayIndexSnapshotEnumerator.cpp
     JavascriptArrayIterator.cpp
+    JavascriptAsyncFromSyncIterator.cpp
     JavascriptBoolean.cpp
     JavascriptBooleanObject.cpp
     JavascriptBuiltInFunctions.cpp
@@ -85,6 +87,8 @@ set(CRLIB_SOURCE_CODES
     JavascriptStringEnumerator.cpp
     JavascriptStringIterator.cpp
     JavascriptStringObject.cpp
+    JavascriptBigInt.cpp
+    JavascriptBigIntObject.cpp
     JavascriptSymbol.cpp
     JavascriptSymbolObject.cpp
     JavascriptTypedNumber.cpp

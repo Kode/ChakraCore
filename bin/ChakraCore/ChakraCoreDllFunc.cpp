@@ -90,7 +90,7 @@ bool AttachProcess(HANDLE hmod)
 
 static void DetachProcess()
 {
-    ThreadBoundThreadContextManager::DestroyAllContextsAndEntries();
+    ThreadBoundThreadContextManager::DestroyAllContextsAndEntries(false /*shouldDeleteCurrentTlsEntry*/);
 
     // In JScript, we never unload except for when the app shuts down
     // because DllCanUnloadNow always returns S_FALSE. As a result
@@ -160,6 +160,8 @@ EXTERN_C BOOL WINAPI DllMain(HINSTANCE hmod, DWORD dwReason, PVOID pvReserved)
 #if defined(CHECK_MEMORY_LEAK) || defined(LEAK_REPORT)
         else
         {
+            ThreadBoundThreadContextManager::DestroyAllContexts();
+            DetachProcess();
             ThreadContext::ReportAndCheckLeaksOnProcessDetach();
         }
 #endif

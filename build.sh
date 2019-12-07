@@ -408,7 +408,7 @@ done
 if [[ $USE_LOCAL_ICU == 1 ]]; then
     LOCAL_ICU_DIR="$CHAKRACORE_DIR/deps/Chakra.ICU/icu"
     if [[ ! -d $LOCAL_ICU_DIR ]]; then
-        "$PYTHON2_BINARY" "$CHAKRACORE_DIR/tools/configure_icu.py" 57.1 $ALWAYS_YES
+        "$PYTHON2_BINARY" "$CHAKRACORE_DIR/tools/icu/configure.py" 63.2 $ALWAYS_YES
     fi
 
     # if there is still no directory, then the user declined the license agreement
@@ -546,7 +546,7 @@ else
 fi
 
 # check clang version (min required 3.7)
-VERSION=$($CLANG_PATH --version | grep "version [0-9]*\.[0-9]*" --o -i | grep "[0-9]\.[0-9]*" --o)
+VERSION=$($CLANG_PATH --version | grep "version [0-9]*\.[0-9]*" --o -i | grep "[0-9]*\.[0-9]*" --o)
 VERSION=${VERSION/./}
 
 if [[ $VERSION -lt 37 ]]; then

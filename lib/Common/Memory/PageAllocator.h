@@ -6,12 +6,18 @@
 #include "PageAllocatorDefines.h"
 #include "Exceptions/ExceptionBase.h"
 
+#ifdef ENABLE_BASIC_TELEMETRY
+#include "AllocatorTelemetryStats.h"
+#endif
+
 #ifdef PROFILE_MEM
 struct PageMemoryData;
 #endif
 
+#if !FLOATVAR
 class CodeGenNumberThreadAllocator;
 struct XProcNumberPageSegmentManager;
+#endif
 
 namespace Memory
 {
@@ -488,10 +494,12 @@ template<> inline PageAllocatorBaseCommon::AllocatorType PageAllocatorBaseCommon
 template<typename TVirtualAlloc, typename TSegment, typename TPageSegment>
 class PageAllocatorBase: public PageAllocatorBaseCommon
 {
+#if !FLOATVAR
     friend class ::CodeGenNumberThreadAllocator;
     friend struct ::XProcNumberPageSegmentManager;
+#endif
     // Allowing recycler to report external memory allocation.
-    friend class Recycler;
+    friend class HeapInfo;
 public:
     static uint const DefaultMaxFreePageCount = 0x400;       // 4 MB
     static uint const DefaultLowMaxFreePageCount = 0x100;    // 1 MB for low-memory process
@@ -657,7 +665,7 @@ public:
     bool IsClosed() const { return isClosed; }
     void Close() { Assert(!isClosed); isClosed = true; }
 
-    AllocationPolicyManager * GetAllocationPolicyManager() { return policyManager; }
+    AllocationPolicyManager * GetAllocationPolicyManager() const { return policyManager; }
 
     uint GetMaxAllocPageCount();
 
@@ -742,6 +750,12 @@ public:
 #if DBG_DUMP
     char16 const * debugName;
 #endif
+
+#ifdef ENABLE_BASIC_TELEMETRY
+    AllocatorDecommitStats* GetDecommitStats() { return this->decommitStats; }
+    void SetDecommitStats(AllocatorDecommitStats* val) { this->decommitStats = val; }
+#endif
+
 protected:
     void InitVirtualAllocator(TVirtualAlloc * virtualAllocator);
 
@@ -844,6 +858,15 @@ protected:
 
     // Idle Decommit
     bool isUsed;
+    // A flag to indicate we are trying to enter IdleDecommit again and back-off from decommit in DecommitNow. This is to prevent
+    // blocking UI thread for too long. We have seen hangs under AppVerifier and believe this may be due to the decommit being slower
+    // under AppVerifier. This shouldn't be a problem otherwise.
+    bool waitingToEnterIdleDecommit;
+
+#if DBG
+    uint idleDecommitBackOffCount;
+#endif
+
     size_t minFreePageCount;
     uint idleDecommitEnterCount;
 
@@ -898,6 +921,10 @@ private:
     PageMemoryData * memoryData;
 #endif
 
+#ifdef ENABLE_BASIC_TELEMETRY
+    AllocatorDecommitStats* decommitStats;
+#endif
+
     size_t usedBytes;
     PageAllocatorType type;
 
@@ -939,6 +966,14 @@ private:
     void SubUsedBytes(size_t bytes);
     void AddNumberOfSegments(size_t segmentCount);
     void SubNumberOfSegments(size_t segmentCount);
+
+public:
+    size_t GetReservedBytes() const { return this->reservedBytes; };
+    size_t GetCommittedBytes() const { return this->committedBytes; }
+    size_t GetUsedBytes() const { return this->usedBytes; }
+    size_t GetNumberOfSegments() const { return this->numberOfSegments; }
+
+private:
 
     bool RequestAlloc(size_t byteCount)
     {

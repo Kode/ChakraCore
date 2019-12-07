@@ -30,6 +30,12 @@
 #include "DictionaryStats.h"
 #endif
 
+#pragma warning(push)
+#pragma warning(disable:__WARNING_CALLER_FAILING_TO_HOLD_MEDIUM_CONFIDENCE)
+#pragma warning(disable:__WARNING_FAILING_TO_RELEASE_MEDIUM_CONFIDENCE)
+#pragma warning(disable:__WARNING_FAILING_TO_ACQUIRE_MEDIUM_CONFIDENCE)
+#pragma warning(disable:__WARNING_RELEASING_UNHELD_LOCK_MEDIUM_CONFIDENCE)
+
 namespace Js
 {
     template <class TDictionary>
@@ -54,10 +60,10 @@ namespace JsUtil
     class AsymetricResizeLock
     {
     public:
-        void BeginResize() { cs.Enter(); }
-        void EndResize() { cs.Leave(); }
-        void LockResize() { cs.Enter(); }
-        void UnlockResize() { cs.Leave(); }
+        void _Acquires_lock_(cs.cs) BeginResize() { cs.Enter(); }
+        void _Releases_lock_(cs.cs) EndResize() { cs.Leave(); }
+        void _Acquires_lock_(cs.cs) LockResize() { cs.Enter(); }
+        void _Releases_lock_(cs.cs) UnlockResize() { cs.Leave(); }
     private:
         CriticalSection cs;
     };
@@ -102,6 +108,8 @@ namespace JsUtil
         Field(int) freeCount;
         Field(int) modFunctionIndex;
 
+        static const int FreeListSentinel = -2;
+
 #if PROFILE_DICTIONARY
         FieldNoBarrier(DictionaryStats*) stats;
 #endif
@@ -115,8 +123,8 @@ namespace JsUtil
         class AutoDoResize
         {
         public:
-            AutoDoResize(Lock& lock) : lock(lock) { lock.BeginResize(); };
-            ~AutoDoResize() { lock.EndResize(); };
+            AutoDoResize(Lock& lock) : lock(lock) { this->lock.BeginResize(); };
+            ~AutoDoResize() { this->lock.EndResize(); };
         private:
             Lock& lock;
         };
@@ -230,7 +238,7 @@ namespace JsUtil
             return entries[i].Value();
         }
 
-        const TValue Item(const TKey& key) const
+        TValue Item(const TKey& key) const
         {
             int i = FindEntry(key);
             Assert(i >= 0);
@@ -242,6 +250,7 @@ namespace JsUtil
             return Insert<Insert_Add>(key, value);
         }
 
+        // Returns -1 if the key is already in the dictionary
         int AddNew(const TKey& key, const TValue& value)
         {
             return Insert<Insert_AddNew>(key, value);
@@ -669,12 +678,12 @@ namespace JsUtil
             DoCopy(other);
         }
 
-        void LockResize()
+        void _Acquires_lock_(this->cs.cs) LockResize()
         {
             __super::LockResize();
         }
 
-        void UnlockResize()
+        void _Releases_lock_(this->cs.cs) UnlockResize()
         {
             __super::UnlockResize();
         }
@@ -780,9 +789,9 @@ namespace JsUtil
 
         static bool IsFreeEntry(const EntryType &entry)
         {
-            // A free entry's next index will be (-2 - nextIndex), such that it is always <= -2, for fast entry iteration
+            // A free entry's next index will be (FreeListSentinel - nextIndex), such that it is always <= FreeListSentinel, for fast entry iteration
             // allowing for skipping over free entries. -1 is reserved for the end-of-chain marker for a used entry.
-            return entry.next <= -2;
+            return entry.next <= FreeListSentinel;
         }
 
         void SetNextFreeEntryIndex(EntryType &freeEntry, const int nextFreeEntryIndex)
@@ -791,15 +800,15 @@ namespace JsUtil
             Assert(nextFreeEntryIndex >= -1);
             Assert(nextFreeEntryIndex < count);
 
-            // The last entry in the free list chain will have a next of -2 to indicate that it is a free entry. The end of the
+            // The last entry in the free list chain will have a next of FreeListSentinel to indicate that it is a free entry. The end of the
             // free list chain is identified using freeCount.
-            freeEntry.next = nextFreeEntryIndex >= 0 ? -2 - nextFreeEntryIndex : -2;
+            freeEntry.next = nextFreeEntryIndex >= 0 ? FreeListSentinel - nextFreeEntryIndex : FreeListSentinel;
         }
 
         static int GetNextFreeEntryIndex(const EntryType &freeEntry)
         {
             Assert(IsFreeEntry(freeEntry));
-            return -2 - freeEntry.next;
+            return FreeListSentinel - freeEntry.next;
         }
 
         template <typename LookupType>
@@ -1178,8 +1187,10 @@ namespace JsUtil
 
     protected:
         template<class TDictionary, class Leaf>
-        class IteratorBase _ABSTRACT
+        class IteratorBase
         {
+            IteratorBase() = delete;
+
         protected:
             EntryType *const entries;
             int entryIndex;
@@ -1327,8 +1338,8 @@ namespace JsUtil
                 bucketIndex(0u - 1)
             #if DBG
                 ,
-                previousEntryIndexInBucket(-2),
-                indexOfEntryAfterRemovedEntry(-2)
+                previousEntryIndexInBucket(FreeListSentinel),
+                indexOfEntryAfterRemovedEntry(FreeListSentinel)
             #endif
             {
                 if(dictionary.Count() != 0)
@@ -1345,9 +1356,9 @@ namespace JsUtil
                 Assert(this->entryIndex >= -1);
                 Assert(this->entryIndex < dictionary.count);
                 Assert(bucketIndex == 0u - 1 || bucketIndex <= bucketCount);
-                Assert(previousEntryIndexInBucket >= -2);
+                Assert(previousEntryIndexInBucket >= FreeListSentinel);
                 Assert(previousEntryIndexInBucket < dictionary.count);
-                Assert(indexOfEntryAfterRemovedEntry >= -2);
+                Assert(indexOfEntryAfterRemovedEntry >= FreeListSentinel);
                 Assert(indexOfEntryAfterRemovedEntry < dictionary.count);
 
                 return Base::IsValid() && this->entryIndex >= 0;
@@ -1569,12 +1580,12 @@ namespace JsUtil
             this->DoCopy(other);
         }
 
-        void LockResize()
+        void _Acquires_lock_(this->cs.cs) LockResize()
         {
             __super::LockResize();
         }
 
-        void UnlockResize()
+        void _Releases_lock_(this->cs.cs) UnlockResize()
         {
             __super::UnlockResize();
         }
@@ -1848,3 +1859,5 @@ namespace JsUtil
         PREVENT_COPY(SynchronizedDictionary);
     };
 }
+
+#pragma warning(pop)

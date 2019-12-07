@@ -14,9 +14,6 @@ namespace Js
         static FunctionInfo functionInfo;
         Field(GeneratorVirtualScriptFunction*) scriptFunction;
 
-        bool GetPropertyBuiltIns(Var originalInstance, PropertyId propertyId, Var* value, PropertyValueInfo* info, ScriptContext* requestContext, BOOL* result);
-        bool SetPropertyBuiltIns(PropertyId propertyId, Var value, PropertyOperationFlags flags, PropertyValueInfo* info, BOOL* result);
-
     protected:
         DEFINE_VTABLE_CTOR(JavascriptGeneratorFunction, ScriptFunctionBase);
         DEFINE_MARSHAL_OBJECT_TO_SCRIPT_CONTEXT(JavascriptGeneratorFunction);
@@ -30,18 +27,20 @@ namespace Js
         virtual JavascriptString* GetDisplayNameImpl() const override;
         GeneratorVirtualScriptFunction* GetGeneratorVirtualScriptFunction() { return scriptFunction; }
 
-        static JavascriptGeneratorFunction* FromVar(Var var);
-        static JavascriptGeneratorFunction* UnsafeFromVar(Var var);
-        static bool Is(Var var);
+        // Returns whether this function is exactly a JavascriptGeneratorFunction, not a JavascriptAsyncFunction
+        static bool IsBaseGeneratorFunction(RecyclableObject* obj);
         inline static bool Test(JavascriptFunction *obj)
         {
             return VirtualTableInfo<JavascriptGeneratorFunction>::HasVirtualTable(obj)
                 || VirtualTableInfo<CrossSiteObject<JavascriptGeneratorFunction>>::HasVirtualTable(obj);
         }
 
+        static JavascriptGeneratorFunction* New(ScriptContext* scriptContext, GeneratorVirtualScriptFunction* scriptFunction);
         static JavascriptGeneratorFunction* OP_NewScGenFunc(FrameDisplay* environment, FunctionInfoPtrPtr infoRef);
+        static JavascriptGeneratorFunction* OP_NewScGenFuncHomeObj(FrameDisplay* environment, FunctionInfoPtrPtr infoRef, Var homeObj);
         static Var EntryGeneratorFunctionImplementation(RecyclableObject* function, CallInfo callInfo, ...);
         static Var EntryAsyncFunctionImplementation(RecyclableObject* function, CallInfo callInfo, ...);
+        static Var EntryAsyncGeneratorFunctionImplementation(RecyclableObject* function, CallInfo callInfo, ...);
         static DWORD GetOffsetOfScriptFunction() { return offsetof(JavascriptGeneratorFunction, scriptFunction); }
 
         void SetScriptFunction(GeneratorVirtualScriptFunction* scriptFunction) {
@@ -55,7 +54,7 @@ namespace Js
         virtual bool IsAnonymousFunction() const override;
 
         virtual Var GetSourceString() const;
-        virtual Var EnsureSourceString();
+        virtual JavascriptString * EnsureSourceString();
 
         virtual PropertyQueryFlags HasPropertyQuery(PropertyId propertyId, _Inout_opt_ PropertyValueInfo* info) override;
         virtual PropertyQueryFlags GetPropertyQuery(Var originalInstance, PropertyId propertyId, Var* value, PropertyValueInfo* info, ScriptContext* requestContext) override;
@@ -64,8 +63,7 @@ namespace Js
         virtual BOOL SetProperty(PropertyId propertyId, Var value, PropertyOperationFlags flags, PropertyValueInfo* info) override;
         virtual BOOL SetProperty(JavascriptString* propertyNameString, Var value, PropertyOperationFlags flags, PropertyValueInfo* info) override;
 
-        virtual BOOL SetAccessors(PropertyId propertyId, Var getter, Var setter, PropertyOperationFlags flags = PropertyOperation_None) override;
-        virtual BOOL GetAccessors(PropertyId propertyId, Var *getter, Var *setter, ScriptContext * requestContext) override;
+        _Check_return_ _Success_(return) virtual BOOL GetAccessors(PropertyId propertyId, _Outptr_result_maybenull_ Var* getter, _Outptr_result_maybenull_ Var* setter, ScriptContext* requestContext) override;
         virtual DescriptorFlags GetSetter(PropertyId propertyId, Var *setterValue, PropertyValueInfo* info, ScriptContext* requestContext) override;
         virtual DescriptorFlags GetSetter(JavascriptString* propertyNameString, Var *setterValue, PropertyValueInfo* info, ScriptContext* requestContext) override;
 
@@ -100,6 +98,8 @@ namespace Js
         }
     };
 
+    template <> bool VarIsImpl<JavascriptGeneratorFunction>(RecyclableObject* obj);
+
     class JavascriptAsyncFunction : public JavascriptGeneratorFunction
     {
     private:
@@ -117,9 +117,6 @@ namespace Js
         static JavascriptAsyncFunction* New(ScriptContext* scriptContext, GeneratorVirtualScriptFunction* scriptFunction);
         static DWORD GetOffsetOfScriptFunction() { return JavascriptGeneratorFunction::GetOffsetOfScriptFunction(); }
 
-        static JavascriptAsyncFunction* FromVar(Var var);
-        static JavascriptAsyncFunction* UnsafeFromVar(Var var);
-        static bool Is(Var var);
         inline static bool Test(JavascriptFunction *obj)
         {
             return VirtualTableInfo<JavascriptAsyncFunction>::HasVirtualTable(obj)
@@ -138,6 +135,47 @@ namespace Js
         }
     };
 
+    template <> bool VarIsImpl<JavascriptAsyncFunction>(RecyclableObject* obj);
+
+    class JavascriptAsyncGeneratorFunction : public JavascriptGeneratorFunction
+    {
+    private:
+        static FunctionInfo functionInfo;
+
+        DEFINE_VTABLE_CTOR(JavascriptAsyncGeneratorFunction, JavascriptGeneratorFunction);
+        DEFINE_MARSHAL_OBJECT_TO_SCRIPT_CONTEXT(JavascriptAsyncGeneratorFunction);
+
+    protected:
+        JavascriptAsyncGeneratorFunction(DynamicType* type);
+
+    public:
+        JavascriptAsyncGeneratorFunction(DynamicType* type, GeneratorVirtualScriptFunction* scriptFunction);
+
+        static JavascriptAsyncGeneratorFunction* New(ScriptContext* scriptContext, GeneratorVirtualScriptFunction* scriptFunction);
+        static DWORD GetOffsetOfScriptFunction() { return JavascriptGeneratorFunction::GetOffsetOfScriptFunction(); }
+
+        inline static bool Test(JavascriptFunction *obj)
+        {
+            return VirtualTableInfo<JavascriptAsyncGeneratorFunction>::HasVirtualTable(obj)
+                || VirtualTableInfo<CrossSiteObject<JavascriptAsyncGeneratorFunction>>::HasVirtualTable(obj);
+        }
+
+/* TODO: support TTD for Async Generators
+#if ENABLE_TTD
+        virtual TTD::NSSnapObjects::SnapObjectType GetSnapTag_TTD() const override;
+        virtual void ExtractSnapObjectDataInto(TTD::NSSnapObjects::SnapObject* objData, TTD::SlabAllocator& alloc) override;
+#endif
+*/
+
+    public:
+        virtual VTableValue DummyVirtualFunctionToHinderLinkerICF()
+        {
+            return VTableValue::VtableJavascriptAsyncFunction;
+        }
+    };
+
+    template <> bool VarIsImpl<JavascriptAsyncGeneratorFunction>(RecyclableObject* obj);
+
     class GeneratorVirtualScriptFunction : public ScriptFunction
     {
     private:
@@ -148,7 +186,7 @@ namespace Js
 
     protected:
         DEFINE_VTABLE_CTOR(GeneratorVirtualScriptFunction, ScriptFunction);
- 
+
     public:
         GeneratorVirtualScriptFunction(FunctionProxy* proxy, ScriptFunctionType* deferredPrototypeType) : ScriptFunction(proxy, deferredPrototypeType) { }
 
@@ -162,6 +200,11 @@ namespace Js
         virtual TTD::NSSnapObjects::SnapObjectType GetSnapTag_TTD() const override;
         virtual void ExtractSnapObjectDataInto(TTD::NSSnapObjects::SnapObject* objData, TTD::SlabAllocator& alloc) override;
 #endif
+
+        virtual VTableValue DummyVirtualFunctionToHinderLinkerICF()
+        {
+            return VTableValue::VtableJavascriptGeneratorFunction;
+        }
     };
 
     typedef FunctionWithComputedName<GeneratorVirtualScriptFunction> GeneratorVirtualScriptFunctionWithComputedName;

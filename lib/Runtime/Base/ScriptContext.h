@@ -18,7 +18,9 @@ using namespace PlatformAgnostic;
 
 class NativeCodeGenerator;
 class BackgroundParser;
+class BGParseManager;
 struct IActiveScriptDirect;
+
 namespace Js
 {
 #ifdef ENABLE_BASIC_TELEMETRY
@@ -33,6 +35,7 @@ namespace Js
     struct HaltCallback;
     struct DebuggerOptionsCallback;
     class ModuleRecordBase;
+    class SimpleDataCacheWrapper;
 }
 
 // Created for every source buffer passed by host.
@@ -120,7 +123,16 @@ enum LoadScriptFlag
     LoadScriptFlag_isFunction = 0x20,                   // input script is in a function scope, not global code.
     LoadScriptFlag_Utf8Source = 0x40,                   // input buffer is utf8 encoded.
     LoadScriptFlag_LibraryCode = 0x80,                  // for debugger, indicating 'not my code'
-    LoadScriptFlag_ExternalArrayBuffer = 0x100          // for ExternalArrayBuffer
+    LoadScriptFlag_ExternalArrayBuffer = 0x100,         // for ExternalArrayBuffer
+    LoadScriptFlag_CreateParserState = 0x200,           // create the parser state cache while parsing.
+    LoadScriptFlag_StrictMode = 0x400                   // parse using strict mode semantics
+};
+
+enum class ScriptContextPrivilegeLevel
+{
+    Low,
+    Medium,
+    High
 };
 
 #ifdef INLINE_CACHE_STATS
@@ -172,6 +184,9 @@ public:
     virtual HRESULT FetchImportedModule(Js::ModuleRecordBase* referencingModule, LPCOLESTR specifier, Js::ModuleRecordBase** dependentModuleRecord) = 0;
     virtual HRESULT FetchImportedModuleFromScript(DWORD_PTR dwReferencingSourceContext, LPCOLESTR specifier, Js::ModuleRecordBase** dependentModuleRecord) = 0;
     virtual HRESULT NotifyHostAboutModuleReady(Js::ModuleRecordBase* referencingModule, Js::Var exceptionVar) = 0;
+    virtual HRESULT InitializeImportMeta(Js::ModuleRecordBase* referencingModule, Js::Var importMetaObject) = 0;
+
+    virtual HRESULT ThrowIfFailed(HRESULT hr) = 0;
 
     Js::ScriptContext* GetScriptContext() { return scriptContext; }
 
@@ -184,6 +199,19 @@ public:
 #endif
 private:
     Js::ScriptContext* scriptContext;
+};
+
+class HostStream
+{
+public:
+    virtual byte * ExtendBuffer(byte *oldBuffer, size_t newSize, size_t *allocatedSize) = 0;
+    virtual bool WriteHostObject(void* data) = 0;
+};
+
+class HostReadStream
+{
+public:
+    virtual Js::Var ReadHostObject() = 0;
 };
 
 #if ENABLE_TTD
@@ -497,7 +525,9 @@ namespace Js
         static ushort ProcessNameAndGetLength(Js::StringBuilder<ArenaAllocator>* nameBuffer, const WCHAR* name);
 #endif
 
-        void SetIsDiagnosticsScriptContext(bool set) { this->isDiagnosticsScriptContext = set; }
+        void SetPrivilegeLevel(ScriptContextPrivilegeLevel level) { this->scriptContextPrivilegeLevel = level; }
+        ScriptContextPrivilegeLevel GetPrivilegeLevel() { return this->scriptContextPrivilegeLevel; }
+        void SetIsDiagnosticsScriptContext(bool);
         bool IsDiagnosticsScriptContext() const { return this->isDiagnosticsScriptContext; }
         bool IsScriptContextInNonDebugMode() const;
         bool IsScriptContextInDebugMode() const;
@@ -574,7 +604,6 @@ namespace Js
         CacheAllocator enumeratorCacheAllocator;
 
         ArenaAllocator* interpreterArena;
-        ArenaAllocator* guestArena;
 
 #ifdef ENABLE_SCRIPT_DEBUGGING
         ArenaAllocator* diagnosticArena;
@@ -829,12 +858,12 @@ private:
         DateTime::Utility dateTimeUtility;
 
 public:
-        inline const WCHAR *const GetStandardName(size_t *nameLength, DateTime::YMD *ymd = NULL)
+        inline const WCHAR *GetStandardName(size_t *nameLength, DateTime::YMD *ymd = NULL)
         {
             return dateTimeUtility.GetStandardName(nameLength, ymd);
         }
 
-        inline const WCHAR *const GetDaylightName(size_t *nameLength, DateTime::YMD *ymd = NULL)
+        inline const WCHAR *GetDaylightName(size_t *nameLength, DateTime::YMD *ymd = NULL)
         {
             return dateTimeUtility.GetDaylightName(nameLength, ymd);
         }
@@ -876,6 +905,9 @@ private:
         bool isPerformingNonreentrantWork;
         bool isDiagnosticsScriptContext;   // mentions that current script context belongs to the diagnostics OM.
 
+        // Privilege levels are a way of enforcing a relationship hierarchy between two script contexts
+        // A less privileged script context is not allowed to marshal in objects that live in a more privileged context
+        ScriptContextPrivilegeLevel scriptContextPrivilegeLevel;
         size_t sourceSize;
 
         void CleanSourceListInternal(bool calledDuringMark);
@@ -1074,6 +1106,8 @@ private:
         ScriptConfiguration const * GetConfig(void) const { return &config; }
         CharClassifier const * GetCharClassifier(void) const;
 
+        static bool ExceedsStackNestedFuncCount(uint count);
+
         ThreadContext * GetThreadContext() const { return threadContext; }
 
         static const int MaxEvalSourceSize = 400;
@@ -1096,11 +1130,11 @@ private:
         bool IsInNewFunctionMap(EvalMapString const& key, FunctionInfo **ppFuncInfo);
         void AddToNewFunctionMap(EvalMapString const& key, FunctionInfo *pFuncInfo);
 
-        SourceContextInfo * GetSourceContextInfo(DWORD_PTR hostSourceContext, IActiveScriptDataCache* profileDataCache);
+        SourceContextInfo * GetSourceContextInfo(DWORD_PTR hostSourceContext, SimpleDataCacheWrapper* dataCacheWrapper);
         SourceContextInfo * GetSourceContextInfo(uint hash);
         SourceContextInfo * CreateSourceContextInfo(uint hash, DWORD_PTR hostSourceContext);
         SourceContextInfo * CreateSourceContextInfo(DWORD_PTR hostSourceContext, char16 const * url, size_t len,
-            IActiveScriptDataCache* profileDataCache, char16 const * sourceMapUrl = nullptr, size_t sourceMapUrlLen = 0);
+            SimpleDataCacheWrapper* dataCacheWrapper, char16 const * sourceMapUrl = nullptr, size_t sourceMapUrlLen = 0);
 
 #if defined(LEAK_REPORT) || defined(CHECK_MEMORY_LEAK)
         void ClearSourceContextInfoMaps()
@@ -1278,6 +1312,69 @@ private:
             const char16 *rootDisplayName, LoadScriptFlag loadScriptFlag,
             Js::Var scriptSource = nullptr);
 
+        JavascriptFunction* LoadScriptInternal(Parser* parser,
+            const byte* script, size_t cb,
+            SRCINFO const * pSrcInfo,
+            CompileScriptException * pse, Utf8SourceInfo** ppSourceInfo,
+            const char16 *rootDisplayName, LoadScriptFlag loadScriptFlag,
+            Js::Var scriptSource = nullptr);
+
+        HRESULT TryDeserializeParserState(
+            _In_ ULONG grfscr,
+            _In_ uint sourceCRC,
+            _In_ charcount_t cchLength,
+            _In_ SRCINFO *srcInfo,
+            _In_ Js::Utf8SourceInfo* utf8SourceInfo,
+            _Inout_ uint& sourceIndex,
+            _In_ bool isCesu8,
+            _In_opt_ NativeModule* nativeModule,
+            _Outptr_ Js::ParseableFunctionInfo ** func,
+            _Outptr_result_buffer_(*parserStateCacheByteCount) byte** parserStateCacheBuffer,
+            _Out_ DWORD* parserStateCacheByteCount,
+            _In_ Js::SimpleDataCacheWrapper* pDataCache);
+
+        HRESULT TrySerializeParserState(
+            _In_ uint sourceCRC,
+            _In_reads_bytes_(cbLength) LPCUTF8 pszSrc,
+            _In_ size_t cbLength,
+            _In_ SRCINFO *srcInfo,
+            _In_ Js::ParseableFunctionInfo* func,
+            _In_reads_bytes_(parserStateCacheByteCount) byte* parserStateCacheBuffer,
+            _In_ DWORD parserStateCacheByteCount,
+            _In_ Js::SimpleDataCacheWrapper* pDataCache);
+
+        HRESULT CompileUTF8Core(
+            __in Parser& ps,
+            __in Js::Utf8SourceInfo* utf8SourceInfo,
+            __in SRCINFO *srcInfo,
+            __in BOOL fOriginalUTF8Code,
+            _In_reads_bytes_(cbLength) LPCUTF8 pszSrc,
+            __in size_t cbLength,
+            __in ULONG grfscr,
+            __in CompileScriptException *pse,
+            __inout charcount_t& cchLength,
+            __out size_t& srcLength,
+            __out uint& sourceIndex,
+            __deref_out Js::ParseableFunctionInfo ** func,
+            __in_opt Js::SimpleDataCacheWrapper* pDataCache);
+
+        HRESULT SerializeParserState(const byte* script, size_t cb,
+            SRCINFO const * pSrcInfo,
+            CompileScriptException * pse, Utf8SourceInfo** ppSourceInfo,
+            const char16 *rootDisplayName, LoadScriptFlag loadScriptFlag,
+            byte** buffer, DWORD* bufferSize, ArenaAllocator* alloc,
+            JavascriptFunction** function = nullptr,
+            Js::Var scriptSource = nullptr);
+
+        void MakeUtf8SourceInfo(const byte* script,
+            size_t cb,
+            SRCINFO const * pSrcInfo,
+            Utf8SourceInfo** ppSourceInfo,
+            LoadScriptFlag loadScriptFlag,
+            Js::Var scriptSource);
+
+        ULONG GetParseFlags(LoadScriptFlag loadScriptFlag, Utf8SourceInfo* pSourceInfo, SourceContextInfo* sourceContextInfo);
+
         ArenaAllocator* GeneralAllocator() { return &generalAllocator; }
 
 #ifdef ENABLE_BASIC_TELEMETRY
@@ -1310,13 +1407,6 @@ private:
 
         bool EnsureInterpreterArena(ArenaAllocator **);
         void ReleaseInterpreterArena();
-
-        ArenaAllocator* GetGuestArena() const
-        {
-            return guestArena;
-        }
-
-        void ReleaseGuestArena();
 
         Recycler* GetRecycler() const { return recycler; }
         RecyclerJavascriptNumberAllocator * GetNumberAllocator() { return &numberAllocator; }
@@ -1374,13 +1464,10 @@ private:
         BOOL IsNativeAddress(void * codeAddr);
 #endif
 
-        uint SaveSourceCopy(Utf8SourceInfo* sourceInfo, int cchLength, bool isCesu8);
-        bool SaveSourceCopy(Utf8SourceInfo* const sourceInfo, int cchLength, bool isCesu8, uint * index);
-
         uint SaveSourceNoCopy(Utf8SourceInfo* sourceInfo, int cchLength, bool isCesu8);
 
-        void CloneSources(ScriptContext* sourceContext);
         Utf8SourceInfo* GetSource(uint sourceIndex);
+        void RemoveSource(uint sourceIndex);
 
         uint SourceCount() const { return (uint)sourceList->Count(); }
         void CleanSourceList() { CleanSourceListInternal(false); }
@@ -1471,8 +1558,6 @@ private:
 
         void FreeFunctionEntryPoint(Js::JavascriptMethod codeAddress, Js::JavascriptMethod thunkAddress);
 
-    private:
-        uint CloneSource(Utf8SourceInfo* info);
     public:
         void RegisterProtoInlineCache(InlineCache *pCache, PropertyId propId);
         void InvalidateProtoCaches(const PropertyId propertyId);
@@ -1763,6 +1848,8 @@ private:
         virtual intptr_t GetLibraryAddr() const override;
         virtual intptr_t GetGlobalObjectAddr() const override;
         virtual intptr_t GetGlobalObjectThisAddr() const override;
+        virtual intptr_t GetObjectPrototypeAddr() const;
+        virtual intptr_t GetFunctionPrototypeAddr() const;
         virtual intptr_t GetNumberAllocatorAddr() const override;
         virtual intptr_t GetRecyclerAddr() const override;
         virtual bool GetRecyclerAllowNativeCodeBumpAllocation() const override;

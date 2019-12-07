@@ -103,13 +103,6 @@
 
 #define get_cpuid __cpuid
 
-#if defined(__clang__)
-__forceinline void  __int2c()
-{
-    __asm int 0x2c
-}
-#endif
-
 #else // !_WIN32
 
 #define USING_PAL_STDLIB 1
@@ -498,15 +491,8 @@ DWORD __cdecl CharUpperBuffW(const char16* lpsz, DWORD  cchLength);
 #include <stdint.h>
 #endif
 
-// MSVC specific keywords
-#if defined(_MSC_VER)
-#define _ABSTRACT abstract
-#else
-#define _ABSTRACT
-#endif
-
 // `typename QualifiedName` declarations outside of template code not supported before MSVC 2015 update 1
-#if defined(_MSC_VER) && _MSC_VER < 1910
+#if defined(_MSC_VER) && _MSC_VER < 1910 && !defined(__clang__)
 #define _TYPENAME
 #else
 #define _TYPENAME typename
@@ -751,6 +737,7 @@ namespace PlatformAgnostic
 
 #include "PlatformAgnostic/DateTime.h"
 #include "PlatformAgnostic/Numbers.h"
+#include "PlatformAgnostic/Arrays.h"
 #include "PlatformAgnostic/SystemInfo.h"
 #include "PlatformAgnostic/Thread.h"
 #include "PlatformAgnostic/AssemblyCommon.h"

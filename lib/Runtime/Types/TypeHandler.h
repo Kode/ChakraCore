@@ -48,7 +48,7 @@ namespace Js
         Field(int) slotCapacity;
         Field(uint16) unusedBytes;             // This always has it's lowest bit set to avoid false references
         Field(uint16) inlineSlotCapacity;
-        Field(bool) isNotPathTypeHandlerOrHasUserDefinedCtor;
+        Field(bool) protoCachesWereInvalidated;
 
     public:
         DEFINE_GETCPPNAME_ABSTRACT();
@@ -57,8 +57,9 @@ namespace Js
             propertyTypes(typeHandler->propertyTypes),
             slotCapacity(typeHandler->slotCapacity),
             offsetOfInlineSlots(typeHandler->offsetOfInlineSlots),
-            isNotPathTypeHandlerOrHasUserDefinedCtor(typeHandler->isNotPathTypeHandlerOrHasUserDefinedCtor),
-            unusedBytes(typeHandler->unusedBytes)
+            unusedBytes(typeHandler->unusedBytes),
+            protoCachesWereInvalidated(false),
+            inlineSlotCapacity(typeHandler->inlineSlotCapacity)
         {
         }
 
@@ -72,6 +73,7 @@ namespace Js
         static DynamicTypeHandler * GetCurrentTypeHandler(DynamicObject * instance);
         static void SetInstanceTypeHandler(DynamicObject * instance, DynamicTypeHandler * typeHandler, bool hasChanged = true);
         static void ReplaceInstanceType(DynamicObject * instance, DynamicType * type);
+        virtual DynamicTypeHandler * Clone(Recycler * recycler) = 0;
 
     private:
         static bool IsObjectHeaderInlined(const uint16 offsetOfInlineSlots);
@@ -344,13 +346,17 @@ namespace Js
              (v) Seal
             (vi) Freeze
         */
-        bool GetIsLocked() const { return (this->flags & IsLockedFlag) != 0; }
+        bool GetIsLocked() const { return GetIsLocked(this->flags); }
+        static bool GetIsLocked(byte flags) { return (flags & IsLockedFlag) != 0; }
 
         bool GetIsShared() const { return (this->flags & IsSharedFlag) != 0; }
         bool GetMayBecomeShared() const { return (this->flags & MayBecomeSharedFlag) != 0; }
         bool GetIsOrMayBecomeShared() const { return (this->flags & (MayBecomeSharedFlag | IsSharedFlag)) != 0; }
         bool GetHasKnownSlot0() const { return (this->flags & HasKnownSlot0Flag) != 0; }
-        bool GetIsPrototype() const { return (this->flags & IsPrototypeFlag) != 0; }
+
+        bool GetIsPrototype() const { return GetIsPrototype(this->flags); }
+        static bool GetIsPrototype(byte flags) { return (flags & IsPrototypeFlag) != 0; }
+
         bool GetIsInlineSlotCapacityLocked() const { return (this->propertyTypes & PropertyTypesInlineSlotCapacityLocked) != 0; }
 
         void LockTypeHandler() { Assert(IsLockable()); SetFlags(IsLockedFlag); }
@@ -419,7 +425,6 @@ namespace Js
         }
 
         BOOL Freeze(DynamicObject *instance, bool isConvertedType = false)  { return FreezeImpl(instance, isConvertedType); }
-        bool GetIsNotPathTypeHandlerOrHasUserDefinedCtor() const { return this->isNotPathTypeHandlerOrHasUserDefinedCtor; }
 
         virtual BOOL IsStringTypeHandler() const { return false; }
 
@@ -499,7 +504,7 @@ namespace Js
         virtual DescriptorFlags GetItemSetter(DynamicObject* instance, uint32 index, Var* setterValue, ScriptContext* requestContext);
 
         virtual BOOL SetAccessors(DynamicObject* instance, PropertyId propertyId, Var getter, Var setter, PropertyOperationFlags flags = PropertyOperation_None) = 0;
-        virtual BOOL GetAccessors(DynamicObject* instance, PropertyId propertyId, Var* getter, Var* setter) { return false; };
+        _Check_return_ _Success_(return) virtual BOOL GetAccessors(DynamicObject* instance, PropertyId propertyId, _Outptr_result_maybenull_ Var* getter, _Outptr_result_maybenull_ Var* setter) { return FALSE; };
 
         virtual BOOL PreventExtensions(DynamicObject *instance) = 0;
         virtual BOOL Seal(DynamicObject *instance) = 0;
@@ -528,15 +533,19 @@ namespace Js
 
     private:
         template<bool isStoreField>
-        void InvalidateInlineCachesForAllProperties(ScriptContext* requestContext);
+        bool InvalidateInlineCachesForAllProperties(ScriptContext* requestContext);
 
     public:
-        void InvalidateProtoCachesForAllProperties(ScriptContext* requestContext);
-        void InvalidateStoreFieldCachesForAllProperties(ScriptContext* requestContext);
+        bool InvalidateProtoCachesForAllProperties(ScriptContext* requestContext);
+        bool InvalidateStoreFieldCachesForAllProperties(ScriptContext* requestContext);
+
+        bool ProtoCachesWereInvalidated() const { return protoCachesWereInvalidated; }
+        void SetProtoCachesWereInvalidated() { protoCachesWereInvalidated = true; }
+        bool ClearProtoCachesWereInvalidated();
 
         // For changing __proto__
-        void RemoveFromPrototype(DynamicObject* instance, ScriptContext * requestContext);
-        void AddToPrototype(DynamicObject* instance, ScriptContext * requestContext);
+        void RemoveFromPrototype(DynamicObject* instance, ScriptContext * requestContext, bool * allProtoCachesInvalidated);
+        void AddToPrototype(DynamicObject* instance, ScriptContext * requestContext, bool * allProtoCachesInvalidated);
         virtual void SetPrototype(DynamicObject* instance, RecyclableObject* newPrototype);
 
         virtual void ResetTypeHandler(DynamicObject * instance);
@@ -547,6 +556,8 @@ namespace Js
         virtual BOOL IsPathTypeHandler() const { return FALSE; }
         virtual BOOL IsSimpleDictionaryTypeHandler() const {return FALSE; }
         virtual BOOL IsDictionaryTypeHandler() const {return FALSE;}
+
+        virtual bool IsObjectCopyable() const { return false; }
 
         static bool IsolatePrototypes() { return CONFIG_FLAG(IsolatePrototypes); }
         static bool ChangeTypeOnProto() { return CONFIG_FLAG(ChangeTypeOnProto); }

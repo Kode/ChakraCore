@@ -16,6 +16,8 @@ namespace Js
 #endif
         next(nullptr),
         ldFldInlinees(nullptr),
+        callbackInlinees(nullptr),
+        callApplyTargetInlinees(nullptr),
         globalThisObject(globalThis),
         profiledIterations(profiledIterations),
         sharedPropertyGuards(nullptr),
@@ -102,6 +104,22 @@ namespace Js
         return ldFldInlinees ? ldFldInlinees[inlineCacheIndex] : nullptr;
     }
 
+    const FunctionCodeGenJitTimeData * FunctionCodeGenJitTimeData::GetCallbackInlinee(const ProfileId profiledCallSiteId) const
+    {
+        Assert(GetFunctionBody());
+        Assert(profiledCallSiteId < GetFunctionBody()->GetProfiledCallSiteCount());
+
+        return callbackInlinees ? callbackInlinees[profiledCallSiteId] : nullptr;
+    }
+
+    const FunctionCodeGenJitTimeData * FunctionCodeGenJitTimeData::GetCallApplyTargetInlinee(const ProfileId callApplyCallSiteId) const
+    {
+        Assert(GetFunctionBody());
+        Assert(callApplyCallSiteId < GetFunctionBody()->GetProfiledCallApplyCallSiteCount());
+
+        return callApplyTargetInlinees ? callApplyTargetInlinees[callApplyCallSiteId] : nullptr;
+    }
+
     FunctionCodeGenJitTimeData *FunctionCodeGenJitTimeData::AddInlinee(
         Recycler *const recycler,
         const ProfileId profiledCallSiteId,
@@ -162,6 +180,56 @@ namespace Js
         {
             Js::Throw::OutOfMemory();
         }
+        return inlineeData;
+    }
+
+    FunctionCodeGenJitTimeData * FunctionCodeGenJitTimeData::AddCallbackInlinee(
+        Recycler *const recycler,
+        const ProfileId profiledCallSiteId,
+        FunctionInfo *const inlinee)
+    {
+        Assert(recycler != nullptr);
+        FunctionBody * functionBody = GetFunctionBody();
+        Assert(functionBody != nullptr);
+        Assert(profiledCallSiteId < functionBody->GetProfiledCallSiteCount());
+        Assert(inlinee != nullptr);
+
+        if (!callbackInlinees)
+        {
+            callbackInlinees = RecyclerNewArrayZ(recycler, Field(FunctionCodeGenJitTimeData *), functionBody->GetProfiledCallSiteCount());
+        }
+
+        // Polymorphic arguments are not inlined.
+        Assert(callbackInlinees[profiledCallSiteId] == nullptr);
+
+        FunctionCodeGenJitTimeData * inlineeData = FunctionCodeGenJitTimeData::New(recycler, inlinee, nullptr /* entryPoint */, true /*isInlined*/);
+        callbackInlinees[profiledCallSiteId] = inlineeData;
+        return inlineeData;
+    }
+
+    FunctionCodeGenJitTimeData * FunctionCodeGenJitTimeData::AddCallApplyTargetInlinee(
+        Recycler *const recycler,
+        const ProfileId profiledCallSiteId,
+        const ProfileId callApplyCallSiteId,
+        FunctionInfo *const inlinee)
+    {
+        Assert(recycler != nullptr);
+        FunctionBody * functionBody = GetFunctionBody();
+        Assert(functionBody != nullptr);
+        Assert(profiledCallSiteId < functionBody->GetProfiledCallSiteCount());
+        Assert(callApplyCallSiteId < functionBody->GetProfiledCallApplyCallSiteCount());
+        Assert(inlinee != nullptr);
+
+        if (!callApplyTargetInlinees)
+        {
+            callApplyTargetInlinees = RecyclerNewArrayZ(recycler, Field(FunctionCodeGenJitTimeData *), functionBody->GetProfiledCallApplyCallSiteCount());
+        }
+
+        // Polymorphic call/apply targets are not inlined.
+        Assert(callApplyTargetInlinees[callApplyCallSiteId] == nullptr);
+
+        FunctionCodeGenJitTimeData * inlineeData = FunctionCodeGenJitTimeData::New(recycler, inlinee, nullptr /* entryPoint */, true /*isInlined*/);
+        callApplyTargetInlinees[callApplyCallSiteId] = inlineeData;
         return inlineeData;
     }
 

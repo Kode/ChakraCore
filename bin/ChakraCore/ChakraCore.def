@@ -46,6 +46,7 @@ JsTTDMoveToTopLevelEvent
 JsTTDReplayExecution
 
 JsTTDDiagWriteLog
+JsTTDDiagSetAutoTraceStatus
 
 JsInitializeModuleRecord
 JsParseModuleSource
@@ -63,7 +64,14 @@ JsLessThan
 JsLessThanOrEqual
 
 JsCreateEnhancedFunction
-
 JsSetHostPromiseRejectionTracker
-
 JsGetProxyProperties
+JsSerializeParserState
+JsRunScriptWithParserState
+JsDeserializeParserState
+JsGetPromiseState
+JsGetPromiseResult
+
+JsQueueBackgroundParse_Experimental
+JsDiscardBackgroundParse_Experimental
+JsExecuteBackgroundParse_Experimental

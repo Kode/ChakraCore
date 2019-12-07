@@ -12,6 +12,7 @@ ParseNode::ParseNode(OpCode nop, charcount_t ichMin, charcount_t ichLim)
     this->isUsed = true;
     this->notEscapedUse = false;
     this->isInList = false;
+    this->isPatternDeclaration = false;
     this->isCallApplyTargetLoad = false;
     this->ichMin = ichMin;
     this->ichLim = ichLim;
@@ -39,6 +40,12 @@ ParseNodeInt * ParseNode::AsParseNodeInt()
 {
     Assert(this->nop == knopInt);
     return reinterpret_cast<ParseNodeInt *>(this);
+}
+
+ParseNodeBigInt * ParseNode::AsParseNodeBigInt()
+{
+    Assert(this->nop == knopBigInt);
+    return reinterpret_cast<ParseNodeBigInt *>(this);
 }
 
 ParseNodeFloat * ParseNode::AsParseNodeFloat()
@@ -102,6 +109,13 @@ ParseNodeArrLit * ParseNode::AsParseNodeArrLit()
     return reinterpret_cast<ParseNodeArrLit*>(this);
 }
 
+ParseNodeObjLit * ParseNode::AsParseNodeObjLit()
+{
+    // Currently only Object Assignment Pattern needs extra field to count members
+    Assert(this->nop == knopObjectPattern);
+    return reinterpret_cast<ParseNodeObjLit*>(this);
+}
+
 ParseNodeCall * ParseNode::AsParseNodeCall()
 {
     Assert(this->nop == knopCall || this->nop == knopNew);
@@ -130,7 +144,7 @@ ParseNodeStmt * ParseNode::AsParseNodeStmt()
 {
     Assert(this->nop == knopBlock || this->nop == knopBreak || this->nop == knopContinue || this->nop == knopWith || this->nop == knopIf || this->nop == knopSwitch || this->nop == knopCase || this->nop == knopReturn
         || this->nop == knopTryFinally || this->nop == knopTryCatch || this->nop == knopTry || this->nop == knopCatch || this->nop == knopFinally
-        || this->nop == knopWhile || this->nop == knopDoWhile || this->nop == knopFor || this->nop == knopForIn || this->nop == knopForOf);
+        || this->nop == knopWhile || this->nop == knopDoWhile || this->nop == knopFor || this->nop == knopForIn || this->nop == knopForOf || this->nop == knopForAwaitOf);
     return reinterpret_cast<ParseNodeStmt*>(this);
 }
 
@@ -208,7 +222,7 @@ ParseNodeFinally * ParseNode::AsParseNodeFinally()
 
 ParseNodeLoop * ParseNode::AsParseNodeLoop()
 {
-    Assert(this->nop == knopWhile || this->nop == knopDoWhile || this->nop == knopFor || this->nop == knopForIn || this->nop == knopForOf);
+    Assert(this->nop == knopWhile || this->nop == knopDoWhile || this->nop == knopFor || this->nop == knopForIn || this->nop == knopForOf || this->nop == knopForAwaitOf);
     return reinterpret_cast<ParseNodeLoop*>(this);
 }
 
@@ -226,7 +240,7 @@ ParseNodeFor * ParseNode::AsParseNodeFor()
 
 ParseNodeForInOrForOf * ParseNode::AsParseNodeForInOrForOf()
 {
-    Assert(this->nop == knopForIn || this->nop == knopForOf);
+    Assert(this->nop == knopForIn || this->nop == knopForOf || this->nop == knopForAwaitOf);
     return reinterpret_cast<ParseNodeForInOrForOf*>(this);
 }
 
@@ -348,6 +362,12 @@ ParseNodeStr::ParseNodeStr(charcount_t ichMin, charcount_t ichLim, IdentPtr name
 {
 }
 
+ParseNodeBigInt::ParseNodeBigInt(charcount_t ichMin, charcount_t ichLim, IdentPtr name)
+    : ParseNode(knopBigInt, ichMin, ichLim), pid(name)
+{
+}
+
+
 ParseNodeName::ParseNodeName(charcount_t ichMin, charcount_t ichLim, IdentPtr name)
     : ParseNode(knopName, ichMin, ichLim), pid(name)
 {     
@@ -395,6 +415,11 @@ ParseNodeArrLit::ParseNodeArrLit(OpCode nop, charcount_t ichMin, charcount_t ich
 {
 }
 
+ParseNodeObjLit::ParseNodeObjLit(OpCode nop, charcount_t ichMin, charcount_t ichLim, uint staticCnt, uint computedCnt, bool rest)
+    : ParseNodeUni(nop, ichMin, ichLim, nullptr), staticCount(staticCnt), computedCount(computedCnt), hasRest(rest)
+{
+}
+
 ParseNodeFnc::ParseNodeFnc(OpCode nop, charcount_t ichMin, charcount_t ichLim)
     : ParseNode(nop, ichMin, ichLim)
 {
@@ -423,6 +448,7 @@ ParseNodeFnc::ParseNodeFnc(OpCode nop, charcount_t ichMin, charcount_t ichLim)
 
     this->astSize = 0;
     this->cbMin = 0;
+    this->cbStringMin = 0;
     this->cbLim = 0;
     this->lineNumber = 0;
     this->columnNumber = 0;
@@ -432,8 +458,8 @@ ParseNodeFnc::ParseNodeFnc(OpCode nop, charcount_t ichMin, charcount_t ichLim)
 #endif
     this->pRestorePoint = nullptr;
     this->deferredStub = nullptr;
-
     this->capturedNames = nullptr;
+    this->superRestrictionState = SuperRestrictionState::Disallowed;
 }
 
 ParseNodeClass::ParseNodeClass(OpCode nop, charcount_t ichMin, charcount_t ichLim)
@@ -576,7 +602,7 @@ ParseNodeTry::ParseNodeTry(OpCode nop, charcount_t ichMin, charcount_t ichLim)
 }
 
 ParseNodeCatch::ParseNodeCatch(OpCode nop, charcount_t ichMin, charcount_t ichLim)
-    : ParseNodeStmt(nop, ichMin, ichLim)
+    : ParseNodeStmt(nop, ichMin, ichLim), pnodeParam(nullptr)
 {
 }
 

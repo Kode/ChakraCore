@@ -52,7 +52,7 @@ HRESULT JITProcessManager::CreateServerProcess(int argc, __in_ecount(argc) LPWST
     STARTUPINFOW si = { 0 };
 
     // overallocate constant cmd line (jshost -jitserver:<guid>)
-    size_t cmdLineSize = (MAX_PATH + argc) * sizeof(WCHAR);
+    size_t cmdLineSize = (MAX_PATH + (size_t)argc) * sizeof(WCHAR);
     for (int i = 0; i < argc; ++i)
     {
         // calculate space requirement for each arg
@@ -68,7 +68,7 @@ HRESULT JITProcessManager::CreateServerProcess(int argc, __in_ecount(argc) LPWST
 
 #pragma warning(suppress: 6386) // buffer overrun
 #ifdef ENABLE_DEBUG_CONFIG_OPTIONS
-    hr = StringCchCopyW(cmdLine, cmdLineSize, _u("ch.exe -OOPCFGRegistration- -CheckOpHelpers -jitserver:"));
+    hr = StringCchCopyW(cmdLine, cmdLineSize, _u("ch.exe -CheckOpHelpers -jitserver:"));
 #else
     hr = StringCchCopyW(cmdLine, cmdLineSize, _u("ch.exe -jitserver:"));
 #endif

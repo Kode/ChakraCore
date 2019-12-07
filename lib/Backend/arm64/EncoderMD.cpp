@@ -44,19 +44,19 @@ EncoderMD::Init(Encoder *encoder)
 ///
 ///----------------------------------------------------------------------------
 
-const BYTE
+BYTE
 EncoderMD::GetRegEncode(IR::RegOpnd *regOpnd)
 {
     return GetRegEncode(regOpnd->GetReg());
 }
 
-const BYTE
+BYTE
 EncoderMD::GetRegEncode(RegNum reg)
 {
     return RegEncode[reg];
 }
 
-const BYTE
+BYTE
 EncoderMD::GetFloatRegEncode(IR::RegOpnd *regOpnd)
 {
     BYTE regEncode = GetRegEncode(regOpnd->GetReg());
@@ -152,6 +152,7 @@ void EncoderMD::CanonicalizeLea(IR::Instr * instr)
         indirOpnd->Free(this->m_func);
     }
     instr->m_opcode = Js::OpCode::ADD;
+    Assert(instr->GetSrc1()->GetSize() == instr->GetSrc2()->GetSize());
 }
 
 bool
@@ -760,6 +761,24 @@ int EncoderMD::EmitConvertToInt(Arm64CodeEmitter &Emitter, IR::Instr* instr, _In
     return 0;
 }
 
+template<typename _Emitter>
+int EncoderMD::EmitConditionalSelectFp(Arm64CodeEmitter &Emitter, IR::Instr *instr, int condition, _Emitter emitter)
+{
+    IR::Opnd* dst = instr->GetDst();
+    IR::Opnd* src1 = instr->GetSrc1();
+    IR::Opnd* src2 = instr->GetSrc2();
+    Assert(dst->IsRegOpnd());
+    Assert(src1->IsRegOpnd());
+    Assert(src2->IsRegOpnd());
+
+    int size = dst->GetSize();
+    Assert(size == 4 || size == 8);
+    Assert(size == src1->GetSize());
+    Assert(size == src2->GetSize());
+
+    return emitter(Emitter, this->GetFloatRegEncode(dst->AsRegOpnd()), this->GetFloatRegEncode(src1->AsRegOpnd()), this->GetRegEncode(src2->AsRegOpnd()), condition, (size == 8) ? SIZE_1D : SIZE_1S);
+}
+
 //---------------------------------------------------------------------------
 //
 // GenerateEncoding()
@@ -1177,6 +1196,14 @@ EncoderMD::GenerateEncoding(IR::Instr* instr, BYTE *pc)
 
     case Js::OpCode::FCMP:
         bytes = this->EmitOp2FpRegister(Emitter, instr->GetSrc1(), instr->GetSrc2(), EmitNeonFcmp);
+        break;
+
+    case Js::OpCode::FCSELEQ:
+        bytes = this->EmitConditionalSelectFp(Emitter, instr, COND_EQ, EmitNeonFcsel);
+        break;
+
+    case Js::OpCode::FCSELNE:
+        bytes = this->EmitConditionalSelectFp(Emitter, instr, COND_NE, EmitNeonFcsel);
         break;
 
     case Js::OpCode::FCVT:
@@ -1608,7 +1635,7 @@ bool EncoderMD::TryConstFold(IR::Instr *instr, IR::RegOpnd *regOpnd)
         }
 
         instr->ReplaceSrc(regOpnd, constOpnd);
-        LegalizeMD::LegalizeInstr(instr, false);
+        LegalizeMD::LegalizeInstr(instr);
 
         return true;
     }
@@ -1628,7 +1655,7 @@ bool EncoderMD::TryFold(IR::Instr *instr, IR::RegOpnd *regOpnd)
         }
         IR::SymOpnd *symOpnd = IR::SymOpnd::New(regOpnd->m_sym, regOpnd->GetType(), instr->m_func);
         instr->ReplaceSrc(regOpnd, symOpnd);
-        LegalizeMD::LegalizeInstr(instr, false);
+        LegalizeMD::LegalizeInstr(instr);
 
         return true;
     }

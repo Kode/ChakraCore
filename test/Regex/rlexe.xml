@@ -39,6 +39,11 @@
   </test>
   <test>
     <default>
+      <files>clampNumericQuantifier.js</files>
+    </default>
+  </test>
+  <test>
+    <default>
       <files>rx1.js</files>
       <baseline>rx1.baseline</baseline>
     </default>
@@ -119,6 +124,12 @@
     <default>
       <files>replace.js</files>
       <baseline>replace.baseline</baseline>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>dotAll.js</files>
+      <compile-flags>-ES6RegExPrototypeProperties -args summary -endargs</compile-flags>
     </default>
   </test>
   <test>
@@ -221,6 +232,18 @@
   <test>
     <default>
       <files>Bug15992535.js</files>
+      <compile-flags>-args summary -endargs</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>characterclass_with_range.js</files>
+      <compile-flags>-args summary -endargs</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>control_character_escapes.js</files>
       <compile-flags>-args summary -endargs</compile-flags>
     </default>
   </test>

@@ -68,7 +68,7 @@ Instr::IsPlainInstr() const
 }
 
 bool
-Instr::DoStackArgsOpt(Func *topFunc) const
+Instr::DoStackArgsOpt() const
 {
     return this->usesStackArgumentsObject && m_func->IsStackArgsEnabled();
 }
@@ -448,9 +448,15 @@ Instr::SwapOpnds()
     m_src2 = opndTemp;
 }
 
+Instr *
+Instr::CopyWithoutDst()
+{
+    return Copy(false /*copyDst*/);
+}
+
 // Copy a vanilla instruction.
 Instr *
-Instr::Copy()
+Instr::Copy(bool copyDst)
 {
     Instr * instrCopy;
 
@@ -491,7 +497,7 @@ Instr::Copy()
     }
 
     Opnd * opnd = this->GetDst();
-    if (opnd)
+    if (copyDst && opnd)
     {
         instrCopy->SetDst(opnd->Copy(this->m_func));
     }
@@ -984,29 +990,129 @@ void ByteCodeUsesInstr::SetBV(BVSparse<JitArenaAllocator>* newbv)
 // a compare, but still need to generate them for bailouts. Without this, we cause
 // problems because we end up with an instruction losing atomicity in terms of its
 // bytecode use and generation lifetimes.
-void ByteCodeUsesInstr::Aggregate()
+void ByteCodeUsesInstr::AggregateFollowingByteCodeUses()
 {
     IR::Instr* scanner = this->m_next;
     while (scanner && scanner->m_opcode == Js::OpCode::ByteCodeUses && scanner->GetByteCodeOffset() == this->GetByteCodeOffset() && scanner->GetDst() == nullptr)
     {
         IR::ByteCodeUsesInstr* target = scanner->AsByteCodeUsesInstr();
-        Assert(this->m_func == target->m_func);
-        if (target->byteCodeUpwardExposedUsed)
-        {
-            if (this->byteCodeUpwardExposedUsed)
-            {
-                this->byteCodeUpwardExposedUsed->Or(target->byteCodeUpwardExposedUsed);
-                JitAdelete(target->byteCodeUpwardExposedUsed->GetAllocator(), target->byteCodeUpwardExposedUsed);
-                target->byteCodeUpwardExposedUsed = nullptr;
-            }
-            else
-            {
-                this->byteCodeUpwardExposedUsed = target->byteCodeUpwardExposedUsed;
-                target->byteCodeUpwardExposedUsed = nullptr;
-            }
-        }
+        this->Aggregate(target);
         scanner = scanner->m_next;
     }
+}
+
+void ByteCodeUsesInstr::Aggregate(ByteCodeUsesInstr * byteCodeUsesInstr)
+{
+    Assert(this->m_func == byteCodeUsesInstr->m_func);
+    if (byteCodeUsesInstr->byteCodeUpwardExposedUsed)
+    {
+        Assert(byteCodeUsesInstr->GetDst() == nullptr);
+        if (this->byteCodeUpwardExposedUsed)
+        {
+            this->byteCodeUpwardExposedUsed->Or(byteCodeUsesInstr->byteCodeUpwardExposedUsed);
+            JitAdelete(byteCodeUsesInstr->byteCodeUpwardExposedUsed->GetAllocator(), byteCodeUsesInstr->byteCodeUpwardExposedUsed);
+            byteCodeUsesInstr->byteCodeUpwardExposedUsed = nullptr;
+        }
+        else
+        {
+            this->byteCodeUpwardExposedUsed = byteCodeUsesInstr->byteCodeUpwardExposedUsed;
+            byteCodeUsesInstr->byteCodeUpwardExposedUsed = nullptr;
+        }
+    }
+}
+
+bool Instr::CanAggregateByteCodeUsesAcrossInstr(Instr * instr)
+{
+    return !instr->StartsBasicBlock() && 
+        instr->m_func == this->m_func &&
+        ((instr->GetByteCodeOffset() == Js::Constants::NoByteCodeOffset) ||
+        (instr->GetByteCodeOffset() == this->GetByteCodeOffset()));
+}
+
+bool IR::Instr::IsStFldVariant() const
+{
+    return this->m_opcode == Js::OpCode::StFld ||
+        this->m_opcode == Js::OpCode::StFldStrict ||
+        this->m_opcode == Js::OpCode::StLocalFld ||
+        this->m_opcode == Js::OpCode::StRootFld ||
+        this->m_opcode == Js::OpCode::StRootFldStrict ||
+        this->m_opcode == Js::OpCode::StSuperFld ||
+        this->m_opcode == Js::OpCode::StSuperFldStrict;
+}
+
+bool IR::Instr::IsStElemVariant() const
+{
+    return this->m_opcode == Js::OpCode::StElemI_A ||
+        this->m_opcode == Js::OpCode::StElemI_A_Strict ||
+        this->m_opcode == Js::OpCode::StElemC;
+}
+
+bool IR::Instr::DontHoistBailOnNoProfileAboveInGeneratorFunction() const
+{
+    return this->m_opcode == Js::OpCode::ResumeYield ||
+        this->m_opcode == Js::OpCode::ResumeYieldStar ||
+        this->m_opcode == Js::OpCode::GeneratorCreateInterpreterStackFrame;
+}
+
+bool IR::Instr::CanChangeFieldValueWithoutImplicitCall() const
+{
+    // TODO: Why is InitFld necessary?
+    return this->IsStFldVariant() || this->IsStElemVariant();
+}
+
+// If LazyBailOut is the only BailOutKind on the instruction, the BailOutInfo is cleared.
+// Otherwise, we remove the LazyBailOut kind from the instruction and still keep the BailOutInfo.
+void IR::Instr::ClearLazyBailOut()
+{
+    if (!this->HasBailOutInfo())
+    {
+        return;
+    }
+
+    if (this->OnlyHasLazyBailOut())
+    {
+        this->ClearBailOutInfo();
+    }
+    else
+    {
+        this->GetBailOutInfo()->RestoreUseOfDst();
+        this->SetBailOutKind(BailOutInfo::WithoutLazyBailOut(this->GetBailOutKind()));
+    }
+
+    Assert(!this->HasLazyBailOut());
+}
+
+int IR::Instr::GetOpndCount() const
+{
+    return (this->m_src1 ? 1 : 0) + (this->m_src2 ? 1 : 0) + (this->m_dst ? 1 : 0);
+}
+
+bool IR::Instr::AreAllOpndsTypeSpecialized() const
+{
+    bool src1TypeSpec = !this->m_src1 || (this->m_src1->GetStackSym() && this->m_src1->GetStackSym()->IsTypeSpec());
+    bool src2TypeSpec = !this->m_src2 || (this->m_src2->GetStackSym() && this->m_src2->GetStackSym()->IsTypeSpec());
+    bool dstTypeSpec = !this->m_dst || (this->m_dst->GetStackSym() && this->m_dst->GetStackSym()->IsTypeSpec());
+    return src1TypeSpec && src2TypeSpec && dstTypeSpec && this->GetOpndCount() > 0;
+}
+
+bool IR::Instr::OnlyHasLazyBailOut() const
+{
+    return this->HasBailOutInfo() && BailOutInfo::OnlyHasLazyBailOut(this->GetBailOutKind());
+}
+
+bool IR::Instr::HasLazyBailOut() const
+{
+    return this->HasBailOutInfo() && BailOutInfo::HasLazyBailOut(this->GetBailOutKind());
+}
+
+bool IR::Instr::HasPreOpBailOut() const
+{
+    return this->HasBailOutInfo() && this->GetBailOutInfo()->bailOutOffset == this->GetByteCodeOffset();
+}
+
+bool IR::Instr::HasPostOpBailOut() const
+{
+    return this->HasBailOutInfo() && this->GetBailOutInfo()->bailOutOffset > this->GetByteCodeOffset();
 }
 
 BailOutInfo *
@@ -1182,9 +1288,10 @@ Instr::ReplaceBailOutInfo(BailOutInfo *newBailOutInfo)
         Assert(false);
         __assume(UNREACHED);
     }
-    Assert(!oldBailOutInfo->wasCloned && !oldBailOutInfo->wasCopied);
-    if (oldBailOutInfo->bailOutInstr == this)
+    
+    if (oldBailOutInfo->bailOutInstr == this && !oldBailOutInfo->sharedBailOutKind)
     {
+        Assert(!oldBailOutInfo->wasCloned && !oldBailOutInfo->wasCopied);
         JitArenaAllocator * alloc = this->m_func->m_alloc;
         oldBailOutInfo->Clear(alloc);
         JitAdelete(alloc, oldBailOutInfo);
@@ -1547,9 +1654,6 @@ BranchInstr::New(Js::OpCode opcode, LabelInstr * branchTarget, Func *func)
     branchInstr->m_src1 = nullptr;
     branchInstr->m_src2 = nullptr;
     branchInstr->m_byteCodeReg = Js::Constants::NoRegister;
-#if DBG
-    branchInstr->m_isHelperToNonHelperBranch = false;
-#endif
 
     return branchInstr;
 }
@@ -1802,6 +1906,14 @@ BranchInstr::Invert()
         this->m_opcode = Js::OpCode::BrOnNoProperty;
         break;
 
+    case Js::OpCode::BrOnHasLocalProperty:
+        this->m_opcode = Js::OpCode::BrOnNoLocalProperty;
+        break;
+
+    case Js::OpCode::BrOnNoLocalProperty:
+        this->m_opcode = Js::OpCode::BrOnHasLocalProperty;
+        break;
+
     case Js::OpCode::BrOnNoProperty:
         this->m_opcode = Js::OpCode::BrOnHasProperty;
         break;
@@ -1993,6 +2105,22 @@ Instr::New(Js::OpCode opcode, Func *func)
 
     instr = JitAnew(func->m_alloc, IR::Instr);
     instr->Init(opcode, InstrKindInstr, func);
+    return instr;
+}
+
+///----------------------------------------------------------------------------
+///
+/// Instr::New
+///
+///     Create an Instr with a byte code offset.
+///
+///----------------------------------------------------------------------------
+
+Instr *
+Instr::New(Js::OpCode opcode, Func *func, IR::Instr * bytecodeOffsetInstr)
+{
+    Instr * instr = Instr::New(opcode, func);
+    instr->SetByteCodeOffset(bytecodeOffsetInstr);
     return instr;
 }
 
@@ -2486,54 +2614,6 @@ Instr::HoistSrc2(Js::OpCode assignOpcode, RegNum regNum, StackSym *newSym)
     return newInstr;
 }
 
-///----------------------------------------------------------------------------
-///
-/// Instr::HoistIndirOffset
-///
-///     Replace the offset of the given indir with a new symbol, which becomes the indir index.
-///     Assign the new symbol by creating an assignment from the constant offset.
-///
-///----------------------------------------------------------------------------
-
-Instr *
-Instr::HoistIndirOffset(IR::IndirOpnd *indirOpnd, RegNum regNum)
-{
-    int32 offset = indirOpnd->GetOffset();
-    if (indirOpnd->GetIndexOpnd())
-    {
-        Assert(indirOpnd->GetBaseOpnd());
-        return HoistIndirOffsetAsAdd(indirOpnd, indirOpnd->GetBaseOpnd(), offset, regNum);
-    }
-    IntConstOpnd *offsetOpnd = IntConstOpnd::New(offset, TyInt32, this->m_func);
-    RegOpnd *indexOpnd = RegOpnd::New(StackSym::New(TyMachReg, this->m_func), regNum, TyMachReg, this->m_func);
-
-#if defined(DBG) && defined(_M_ARM)
-    if (regNum == SCRATCH_REG)
-    {
-        AssertMsg(indirOpnd->GetBaseOpnd()->GetReg()!= SCRATCH_REG, "Why both are SCRATCH_REG");
-        if (this->GetSrc1() && this->GetSrc1()->IsRegOpnd())
-        {
-            Assert(this->GetSrc1()->AsRegOpnd()->GetReg() != SCRATCH_REG);
-        }
-        if (this->GetSrc2() && this->GetSrc2()->IsRegOpnd())
-        {
-            Assert(this->GetSrc2()->AsRegOpnd()->GetReg() != SCRATCH_REG);
-        }
-        if (this->GetDst() && this->GetDst()->IsRegOpnd())
-        {
-            Assert(this->GetDst()->AsRegOpnd()->GetReg() != SCRATCH_REG);
-        }
-    }
-#endif
-    // Clear the offset and add a new reg as the index.
-    indirOpnd->SetOffset(0);
-    indirOpnd->SetIndexOpnd(indexOpnd);
-
-    Instr *instrAssign = Lowerer::InsertMove(indexOpnd, offsetOpnd, this);
-    indexOpnd->m_sym->SetIsIntConst(offset);
-    return instrAssign;
-}
-
 IndirOpnd *
 Instr::HoistMemRefAddress(MemRefOpnd *const memRefOpnd, const Js::OpCode loadOpCode)
 {
@@ -2606,71 +2686,6 @@ Opnd *Instr::DeepReplace(Opnd *const oldOpnd, Opnd *const newOpnd)
     return Replace(oldOpnd, newOpnd);
 }
 
-Instr *
-Instr::HoistIndirOffsetAsAdd(IR::IndirOpnd *orgOpnd, IR::Opnd *baseOpnd, int offset, RegNum regNum)
-{
-        IR::RegOpnd *newBaseOpnd = IR::RegOpnd::New(StackSym::New(TyMachPtr, this->m_func), regNum, TyMachPtr, this->m_func);
-
-        IR::IntConstOpnd *src2 = IR::IntConstOpnd::New(offset, TyInt32, this->m_func);
-        IR::Instr * instrAdd = IR::Instr::New(Js::OpCode::ADD, newBaseOpnd, baseOpnd, src2, this->m_func);
-
-        this->InsertBefore(instrAdd);
-
-        orgOpnd->ReplaceBaseOpnd(newBaseOpnd);
-        orgOpnd->SetOffset(0);
-
-        return instrAdd;
-}
-
-Instr *
-Instr::HoistIndirIndexOpndAsAdd(IR::IndirOpnd *orgOpnd, IR::Opnd *baseOpnd, IR::Opnd *indexOpnd, RegNum regNum)
-{
-        IR::RegOpnd *newBaseOpnd = IR::RegOpnd::New(StackSym::New(TyMachPtr, this->m_func), regNum, TyMachPtr, this->m_func);
-
-        IR::Instr * instrAdd = IR::Instr::New(Js::OpCode::ADD, newBaseOpnd, baseOpnd, indexOpnd->UseWithNewType(TyMachPtr, this->m_func), this->m_func);
-
-        this->InsertBefore(instrAdd);
-
-        orgOpnd->ReplaceBaseOpnd(newBaseOpnd);
-        orgOpnd->SetIndexOpnd(nullptr);
-
-        return instrAdd;
-}
-
-Instr *
-Instr::HoistSymOffsetAsAdd(IR::SymOpnd *orgOpnd, IR::Opnd *baseOpnd, int offset, RegNum regNum)
-{
-        IR::IndirOpnd *newIndirOpnd = IR::IndirOpnd::New(baseOpnd->AsRegOpnd(), 0, TyMachPtr, this->m_func);
-        this->Replace(orgOpnd, newIndirOpnd); // Replace SymOpnd with IndirOpnd
-        return this->HoistIndirOffsetAsAdd(newIndirOpnd, baseOpnd, offset, regNum);
-}
-
-///----------------------------------------------------------------------------
-///
-/// Instr::HoistSymOffset
-///
-///     Replace the given sym with an indir using the given base and offset.
-///     (This is used, for instance, to hoist a sym offset that is too large to encode.)
-///
-///----------------------------------------------------------------------------
-
-Instr *
-Instr::HoistSymOffset(SymOpnd *symOpnd, RegNum baseReg, uint32 offset, RegNum regNum)
-{
-    IR::RegOpnd *baseOpnd = IR::RegOpnd::New(nullptr, baseReg, TyMachPtr, this->m_func);
-    IR::IndirOpnd *indirOpnd = IR::IndirOpnd::New(baseOpnd, offset, symOpnd->GetType(), this->m_func);
-    if (symOpnd == this->GetDst())
-    {
-        this->ReplaceDst(indirOpnd);
-    }
-    else
-    {
-        this->ReplaceSrc(symOpnd, indirOpnd);
-    }
-
-    return this->HoistIndirOffset(indirOpnd, regNum);
-}
-
 Opnd *
 Instr::UnlinkSrc(Opnd *src)
 {
@@ -2727,6 +2742,10 @@ Instr::IsRealInstr() const
     case Js::OpCode::StatementBoundary:
     case Js::OpCode::NoImplicitCallUses:
     case Js::OpCode::NoIntOverflowBoundary:
+#if DBG
+    case Js::OpCode::CheckLowerIntBound:
+    case Js::OpCode::CheckUpperIntBound:
+#endif
         return false;
 
     default:
@@ -2751,6 +2770,21 @@ Instr::GetNextRealInstr() const
     }
     return instr;
 }
+
+#if DBG
+IR::LabelInstr *
+Instr::GetNextNonEmptyLabel() const
+{
+    IR::Instr *instr = const_cast<Instr*>(this);
+
+    while (instr != nullptr && (!instr->IsLabelInstr() || instr->m_next->IsLabelInstr()))
+    {
+        instr = instr->m_next;
+    }
+
+    return instr->AsLabelInstr();
+}
+#endif
 
 ///----------------------------------------------------------------------------
 ///
@@ -2780,6 +2814,48 @@ Instr::GetNextBranchOrLabel() const
         instr = instr->m_next;
     }
     return instr;
+}
+
+IR::Instr *
+Instr::GetNextByteCodeInstr() const
+{
+    IR::Instr * nextInstr = GetNextRealInstrOrLabel();
+    uint32 currentOffset = GetByteCodeOffset();
+    const auto getNext = [](IR::Instr* nextInstr) -> IR::Instr*
+    {
+        if (nextInstr->IsBranchInstr())
+        {
+            IR::BranchInstr* branchInstr = nextInstr->AsBranchInstr();
+            AssertMsg(branchInstr->IsUnconditional(), "We can't know which branch to take on a conditionnal branch");
+            if (branchInstr->IsUnconditional())
+            {
+                return branchInstr->GetTarget();
+            }
+        }
+        return nextInstr->GetNextRealInstrOrLabel();
+    };
+    while (nextInstr->GetByteCodeOffset() == Js::Constants::NoByteCodeOffset ||
+        nextInstr->GetByteCodeOffset() == currentOffset)
+    {
+        nextInstr = getNext(nextInstr);
+    }
+
+    // Do not check if the instr trying to bailout is in the function prologue
+    // nextInstr->GetByteCodeOffset() < currentOffset would always be true and we would crash
+    if (currentOffset != Js::Constants::NoByteCodeOffset)
+    {
+        // This can happen due to break block removal
+        while (nextInstr->GetByteCodeOffset() == Js::Constants::NoByteCodeOffset ||
+            nextInstr->GetByteCodeOffset() < currentOffset)
+        {
+            nextInstr = getNext(nextInstr);
+        }
+    }
+    else
+    {
+        AssertMsg(nextInstr->GetByteCodeOffset() == 0, "Only instrs before the first one are allowed to not have a bytecode offset");
+    }
+    return nextInstr;
 }
 
 ///----------------------------------------------------------------------------
@@ -2820,6 +2896,42 @@ Instr::GetPrevRealInstrOrLabel() const
 
 ///----------------------------------------------------------------------------
 ///
+/// Instr::GetPrevLabelInstr
+///
+///----------------------------------------------------------------------------
+IR::LabelInstr *
+Instr::GetPrevLabelInstr() const
+{
+    IR::Instr *instr = this->m_prev;
+
+    while (!instr->IsLabelInstr())
+    {
+        instr = instr->m_prev;
+        AssertMsg(instr, "GetPrevLabelInstr() failed...");
+    }
+    return instr->AsLabelInstr();
+}
+
+///----------------------------------------------------------------------------
+///
+/// Instr::GetPrevLabelInstr
+///
+///----------------------------------------------------------------------------
+IR::Instr *
+Instr::GetBlockStartInstr() const
+{
+    IR::Instr *instr = this->m_prev;
+
+    while (!instr->StartsBasicBlock())
+    {
+        instr = instr->m_prev;
+        AssertMsg(instr, "GetBlockStartInstr() failed...");
+    }
+    return instr;
+}
+
+///----------------------------------------------------------------------------
+///
 /// Instr::GetInsertBeforeByteCodeUsesInstr
 /// Finds the instruction before which new instructions can be inserted, by skipping ByteCodeUses instructions associated with
 /// this instruction.
@@ -2838,6 +2950,12 @@ IR::Instr *Instr::GetInsertBeforeByteCodeUsesInstr()
     return insertBeforeInstr;
 }
 
+bool
+Instr::IsByteCodeUsesInstrFor(IR::Instr * instr) const
+{
+    return this->IsByteCodeUsesInstr() && this->GetByteCodeOffset() == instr->GetByteCodeOffset();
+}
+
 ///----------------------------------------------------------------------------
 ///
 /// Instr::GetOrCreateContinueLabel
@@ -2846,7 +2964,7 @@ IR::Instr *Instr::GetInsertBeforeByteCodeUsesInstr()
 IR::LabelInstr *
 Instr::GetOrCreateContinueLabel(const bool isHelper)
 {
-    if(m_next && m_next->IsLabelInstr() && m_next->AsLabelInstr()->isOpHelper == isHelper)
+    if (m_next && m_next->IsLabelInstr() && m_next->AsLabelInstr()->isOpHelper == isHelper)
     {
         return m_next->AsLabelInstr();
     }
@@ -3071,6 +3189,8 @@ Instr::TransferTo(Instr * instr)
     instr->dstIsAlwaysConvertedToInt32 = this->dstIsAlwaysConvertedToInt32;
     instr->dstIsAlwaysConvertedToNumber = this->dstIsAlwaysConvertedToNumber;
     instr->dataWidth = this->dataWidth;
+    instr->isCtorCall = this->isCtorCall;
+    instr->forcePreOpBailOutIfNeeded = this->forcePreOpBailOutIfNeeded;
     IR::Opnd * dst = this->m_dst;
 
     if (dst)
@@ -3091,6 +3211,16 @@ Instr::TransferTo(Instr * instr)
 
     this->m_src1 = nullptr;
     this->m_src2 = nullptr;
+}
+
+// Convert an instruction to a bailout instruction and perform a shallow copy of the input instruction's BailOutInfo.
+// Can optionally change the BailOutKind, otherwise the input instruction's BailOutKind will be used instead.
+IR::Instr *
+Instr::ConvertToBailOutInstrWithBailOutInfoCopy(BailOutInfo *bailOutInfo, IR::BailOutKind bailOutKind)
+{
+    BailOutInfo *bailOutInfoCopy = JitAnew(this->m_func->m_alloc, BailOutInfo, bailOutInfo->bailOutOffset, this->m_func);
+    bailOutInfo->PartialDeepCopyTo(bailOutInfoCopy);
+    return this->ConvertToBailOutInstr(bailOutInfoCopy, bailOutKind);
 }
 
 IR::Instr *
@@ -3309,10 +3439,16 @@ bool Instr::TransfersSrcValue()
     // No point creating an unknown value for the src of a binary instr, as the dst will just be a different
     // Don't create value for instruction without dst as well. The value doesn't go anywhere.
 
-    // if (src2 == nullptr) Disable copy prop for ScopedLdFld/ScopeStFld, etc., consider enabling that in the future
     // Consider: Add opcode attribute to indicate whether the opcode would use the value or not
 
-    return this->GetDst() != nullptr && this->GetSrc2() == nullptr && !OpCodeAttr::DoNotTransfer(this->m_opcode) && !this->CallsAccessor();
+    return
+        this->GetDst() != nullptr &&
+
+        // The lack of a Src2 does not always indicate that the instr is not a transfer instr (ex: StSlotChkUndecl).
+        (this->GetSrc2() == nullptr || OpCodeAttr::NonIntTransfer(this->m_opcode)) &&
+
+        !OpCodeAttr::DoNotTransfer(this->m_opcode) &&
+        !this->CallsAccessor();
 }
 
 
@@ -3348,6 +3484,11 @@ IR::Instr* Instr::GetBytecodeArgOutCapture()
         this->m_opcode == Js::OpCode::ArgOut_A_InlineBuiltIn);
     Assert(this->m_dst->GetStackSym()->m_isArgCaptured);
     IR::Instr* instr = this->GetSrc1()->GetStackSym()->m_instrDef;
+    while (instr->m_opcode != Js::OpCode::BytecodeArgOutCapture)
+    {
+        Assert(instr->GetSrc1() && instr->GetSrc1()->GetStackSym() && instr->GetSrc1()->GetStackSym()->IsSingleDef());
+        instr = instr->GetSrc1()->GetStackSym()->m_instrDef;
+    }
     Assert(instr->m_opcode == Js::OpCode::BytecodeArgOutCapture);
     return instr;
 }
@@ -3530,7 +3671,7 @@ uint Instr::GetAsmJsArgOutSize()
         Assert(UNREACHED);
         return 0;
     }
-}
+    }
 
 uint Instr::GetArgOutSize(bool getInterpreterArgOutCount)
 {
@@ -4114,6 +4255,14 @@ bool Instr::UnaryCalculator(IntConstType src1Const, IntConstType *pResult, IRTyp
     return true;
 }
 
+GeneratorBailInInstr*
+GeneratorBailInInstr::New(IR::Instr* yieldInstr, Func* func)
+{
+    GeneratorBailInInstr* labelInstr = JitAnew(func->m_alloc, IR::GeneratorBailInInstr, func->m_alloc, yieldInstr);
+    labelInstr->Init(Js::OpCode::GeneratorBailInLabel, InstrKindLabel, func, false /* isOpHelper */);
+    return labelInstr;
+}
+
 #if ENABLE_DEBUG_CONFIG_OPTIONS
 ///----------------------------------------------------------------------------
 ///
@@ -4183,7 +4332,7 @@ Instr::DumpTestTrace()
 ///----------------------------------------------------------------------------
 
 void
-Instr::DumpFieldCopyPropTestTrace()
+Instr::DumpFieldCopyPropTestTrace(bool inLandingPad)
 {
     switch (m_opcode)
     {
@@ -4200,9 +4349,15 @@ Instr::DumpFieldCopyPropTestTrace()
     case Js::OpCode::TypeofElem:
 
         char16 debugStringBuffer[MAX_FUNCTION_BODY_DEBUG_STRING_SIZE];
-        Output::Print(_u("TestTrace fieldcopyprop: function %s (%s) "),
+        Output::Print(_u("TestTrace fieldcopyprop"));
+        if (inLandingPad)
+        {
+            Output::Print(_u(" [%s]"), _u("in landing pad"));
+        }
+        Output::Print(_u(": function %s (%s) "),
             this->m_func->GetJITFunctionBody()->GetDisplayName(),
             this->m_func->GetDebugNumberSet(debugStringBuffer));
+
         if (this->IsInlined())
         {
             Output::Print(_u("inlined caller function %s (%s) "),
@@ -4456,8 +4611,16 @@ Instr::Dump(IRDumpFlags flags)
             }
         }
 
-        Output::SkipToColumn(20);
-        Output::Print(_u("="));
+        if (this->isSafeToSpeculate)
+        {
+            Output::SkipToColumn(19);
+            Output::Print(_u("<=="));
+        }
+        else
+        {
+            Output::SkipToColumn(20);
+            Output::Print(_u("="));
+        }
     }
 
     PrintOpCodeName();
@@ -4534,21 +4697,22 @@ Instr::Dump(IRDumpFlags flags)
         }
     }
 
-    if (this->IsByteCodeUsesInstr())
+    if (this->IsByteCodeUsesInstr() || this->m_opcode == Js::OpCode::SpeculatedLoadFence)
     {
-        if (this->AsByteCodeUsesInstr()->GetByteCodeUpwardExposedUsed())
+        ByteCodeUsesInstr* tempbcu = static_cast<ByteCodeUsesInstr*>(this);
+        if (tempbcu->GetByteCodeUpwardExposedUsed())
         {
             bool first = true;
-            FOREACH_BITSET_IN_SPARSEBV(id, this->AsByteCodeUsesInstr()->GetByteCodeUpwardExposedUsed())
+            FOREACH_BITSET_IN_SPARSEBV(id, tempbcu->GetByteCodeUpwardExposedUsed())
             {
                 Output::Print(first? _u("s%d") : _u(", s%d"), id);
                 first = false;
             }
             NEXT_BITSET_IN_SPARSEBV;
         }
-        if (this->AsByteCodeUsesInstr()->propertySymUse)
+        if (tempbcu->propertySymUse)
         {
-            Output::Print(_u("  PropSym: %d"), this->AsByteCodeUsesInstr()->propertySymUse->m_id);
+            Output::Print(_u("  PropSym: %d"), tempbcu->propertySymUse->m_id);
         }
     }
 
@@ -4582,6 +4746,19 @@ PrintByteCodeOffsetEtc:
     }
 }
 
+#if DBG
+bool
+Instr::ShouldEmitIntRangeCheck()
+{
+    // currently only emitting int range check for opnds of instructions with following opcodes:
+    return m_opcode == Js::OpCode::ToVar ||
+        m_opcode == Js::OpCode::LdElemI_A ||
+        m_opcode == Js::OpCode::LdMethodElem ||
+        m_opcode == Js::OpCode::StElemI_A ||
+        m_opcode == Js::OpCode::StElemI_A_Strict ||
+        m_opcode == Js::OpCode::StElemC;
+}
+#endif
 ///----------------------------------------------------------------------------
 ///
 /// LabelInstr::Dump

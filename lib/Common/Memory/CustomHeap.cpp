@@ -288,7 +288,7 @@ BOOL Heap<TAlloc, TPreReservedAlloc>::ProtectAllocationWithExecuteReadWrite(Allo
 {
     DWORD protectFlags = 0;
 
-    if (AutoSystemInfo::Data.IsCFGEnabled())
+    if (GlobalSecurityPolicy::IsCFGEnabled())
     {
         protectFlags = PAGE_EXECUTE_RW_TARGETS_NO_UPDATE;
     }
@@ -303,7 +303,7 @@ template<typename TAlloc, typename TPreReservedAlloc>
 BOOL Heap<TAlloc, TPreReservedAlloc>::ProtectAllocationWithExecuteReadOnly(__in Allocation *allocation, __in_opt char* addressInPage)
 {
     DWORD protectFlags = 0;
-    if (AutoSystemInfo::Data.IsCFGEnabled())
+    if (GlobalSecurityPolicy::IsCFGEnabled())
     {
         protectFlags = PAGE_EXECUTE_RO_TARGETS_NO_UPDATE;
     }
@@ -417,7 +417,7 @@ Allocation* Heap<TAlloc, TPreReservedAlloc>::AllocLargeObject(size_t bytes, usho
         if (this->processHandle == GetCurrentProcess())
         {
             DWORD protectFlags = 0;
-            if (AutoSystemInfo::Data.IsCFGEnabled())
+            if (GlobalSecurityPolicy::IsCFGEnabled())
             {
                 protectFlags = PAGE_EXECUTE_RO_TARGETS_NO_UPDATE;
             }
@@ -513,7 +513,7 @@ DWORD Heap<TAlloc, TPreReservedAlloc>::EnsureAllocationWriteable(Allocation* all
 template<typename TAlloc, typename TPreReservedAlloc>
 DWORD Heap<TAlloc, TPreReservedAlloc>::EnsureAllocationExecuteWriteable(Allocation* allocation)
 {
-    if (AutoSystemInfo::Data.IsCFGEnabled())
+    if (GlobalSecurityPolicy::IsCFGEnabled())
     {
         return EnsureAllocationReadWrite<PAGE_EXECUTE_RW_TARGETS_NO_UPDATE>(allocation);
     }
@@ -573,7 +573,7 @@ bool Heap<TAlloc, TPreReservedAlloc>::AllocInPage(Page* page, size_t bytes, usho
     BVIndex index = GetFreeIndexForPage(page, bytes);
     if (index == BVInvalidIndex)
     {
-        CustomHeap_BadPageState_fatal_error((ULONG_PTR)this);
+        CustomHeap_BadPageState_unrecoverable_error((ULONG_PTR)this);
         return false;
     }
     char* address = page->address + Page::Alignment * index;
@@ -622,14 +622,14 @@ bool Heap<TAlloc, TPreReservedAlloc>::AllocInPage(Page* page, size_t bytes, usho
     //Section of the Page should already be freed.
     if (!page->freeBitVector.TestRange(index, length))
     {
-        CustomHeap_BadPageState_fatal_error((ULONG_PTR)this);
+        CustomHeap_BadPageState_unrecoverable_error((ULONG_PTR)this);
         return false;
     }
 
     //Section of the Page should already be freed.
     if (!page->freeBitVector.TestRange(index, length))
     {
-        CustomHeap_BadPageState_fatal_error((ULONG_PTR)this);
+        CustomHeap_BadPageState_unrecoverable_error((ULONG_PTR)this);
         return false;
     }
 
@@ -685,7 +685,7 @@ Page* Heap<TAlloc, TPreReservedAlloc>::AllocNewPage(BucketId bucket, bool canAll
 
     DWORD protectFlags = 0;
 
-    if (AutoSystemInfo::Data.IsCFGEnabled())
+    if (GlobalSecurityPolicy::IsCFGEnabled())
     {
         protectFlags = PAGE_EXECUTE_RO_TARGETS_NO_UPDATE;
     }
@@ -816,7 +816,7 @@ bool Heap<TAlloc, TPreReservedAlloc>::FreeAllocation(Allocation* object)
     // Make sure that the section under interest or the whole page has not already been freed
     if (page->IsEmpty() || page->freeBitVector.TestAnyInRange(index, length))
     {
-        CustomHeap_BadPageState_fatal_error((ULONG_PTR)this);
+        CustomHeap_BadPageState_unrecoverable_error((ULONG_PTR)this);
         return false;
     }
 
@@ -885,7 +885,7 @@ bool Heap<TAlloc, TPreReservedAlloc>::FreeAllocation(Allocation* object)
 
         DWORD protectFlags = 0;
 
-        if (AutoSystemInfo::Data.IsCFGEnabled())
+        if (GlobalSecurityPolicy::IsCFGEnabled())
         {
             protectFlags = PAGE_EXECUTE_RO_TARGETS_NO_UPDATE;
         }
@@ -1102,17 +1102,9 @@ inline BucketId GetBucketForSize(size_t bytes)
         return BucketId::LargeObjectList;
     }
 
-    BucketId bucket = (BucketId) (log2(bytes) - 7);
-
-    // < 8 => 0
-    // 8 => 1
-    // 9 => 2 ...
+    BucketId bucket = (BucketId) (log2(bytes / Page::sizePerBit));
     Assert(bucket < BucketId::LargeObjectList);
-
-    if (bucket < BucketId::SmallObjectList)
-    {
-        bucket = BucketId::SmallObjectList;
-    }
+    Assert(bucket >= BucketId::SmallObjectList);
 
     return bucket;
 }

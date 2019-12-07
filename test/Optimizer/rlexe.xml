@@ -764,7 +764,7 @@
     <default>
       <files>test105.js</files>
       <baseline>test105.baseline</baseline>
-      <compile-flags>-minInterpretCount:1 -maxInterpretCount:1 -off:simpleJit -off:aggressiveIntTypeSpec -off:fieldHoist</compile-flags>
+      <compile-flags>-minInterpretCount:1 -maxInterpretCount:1 -off:simpleJit -off:aggressiveIntTypeSpec</compile-flags>
       <tags>exclude_dynapogo</tags>
     </default>
   </test>
@@ -933,7 +933,7 @@
   <test>
     <default>
       <files>test130.js</files>
-      <compile-flags>-bgJit- -fullJitAfter:1 -off:fieldHoist -force:deferParse</compile-flags>
+      <compile-flags>-bgJit- -fullJitAfter:1 -force:deferParse</compile-flags>
       <tags>exclude_dynapogo</tags>
     </default>
   </test>
@@ -1213,6 +1213,11 @@
   </test>
   <test>
     <default>
+      <files>PrePassEntanglement.js</files>
+    </default>
+  </test>
+  <test>
+    <default>
       <files>missing_len.js</files>
       <baseline>missing_len.baseline</baseline>
     </default>
@@ -1239,7 +1244,7 @@
     <default>
       <files>ArrayCheckHoist.js</files>
       <baseline>ArrayCheckHoist_Bailout.baseline</baseline>
-      <compile-flags>-args bailout -endArgs -off:fieldHoist -off:fieldCopyProp -off:objTypeSpec -dynamicprofileinput:profile.dpl.ArrayCheckHoist.js</compile-flags>
+      <compile-flags>-args bailout -endArgs -off:fieldCopyProp -off:objTypeSpec -dynamicprofileinput:profile.dpl.ArrayCheckHoist.js</compile-flags>
       <tags>exclude_interpreted,exclude_serialized,Slow</tags>
       <timeout>300</timeout>
     </default>
@@ -1259,6 +1264,12 @@
       <baseline>BoundCheckElimination.baseline</baseline>
       <compile-flags>-bgJit- -minInterpretCount:1 -maxInterpretCount:1 -off:simpleJit -off:bailOnNoProfile -testTrace:boundCheckElimination -testTrace:boundCheckHoist</compile-flags>
       <tags>exclude_dynapogo,exclude_serialized,exclude_nonative,exclude_arm64</tags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>boundCheckHoistBug.js</files>
+      <compile-flags>-mic:1 -off:simplejit</compile-flags>
     </default>
   </test>
   <test>
@@ -1462,13 +1473,41 @@
   <test>
     <default>
       <files>test146.js</files>
-      <compile-flags>-off:bailonnoprofile</compile-flags>
+      <compile-flags>-off:bailonnoprofile -off:earlyreferenceerrors</compile-flags>
     </default>
   </test>
   <test>
     <default>
       <files>test147.js</files>
       <compile-flags>-off:aggressiveinttypespec</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>test148.js</files>
+      <compile-flags>-mic:1 -off:simplejit</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>test149.js</files>
+      <compile-flags>-mic:1 -off:simplejit -bgjit- -force:fixdataprops -lic:1</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>test150.js</files>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>test151.js</files>
+      <compile-flags>-off:usefixeddataprops -off:objtypespec</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>test152.js</files>
     </default>
   </test>
   <test>
@@ -1490,7 +1529,103 @@
       <files>mul_rejit_bug.js</files>
       <baseline>mul_rejit_bug.baseline</baseline>
       <compile-flags>-mic:1 -oopjit- -bgJit- -off:simplejit -trace:rejit</compile-flags>
+      <tags>exclude_dynapogo,exclude_nonative,exclude_serialized</tags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>testsimplepathbrfold.js</files>
+      <compile-flags>-maxinterpretcount:1 -maxsimplejitruncount:1 -oopjit- -trace:pathdepbranchfolding -bgjit-</compile-flags>
+      <baseline>testsimplepathbrfold.baseline</baseline>
       <tags>exclude_dynapogo,exclude_nonative</tags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>bugsimplepathbrfold.js</files>
+      <compile-flags>-maxinterpretcount:1 -maxsimplejitruncount:1 -oopjit-</compile-flags>
+      <baseline>bugsimplepathbrfold.baseline</baseline>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>bugsimplepathbrfold1.js</files>
+      <compile-flags>-maxinterpretcount:1 -maxsimplejitruncount:1 -oopjit-</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>bugsimplepathbrfold3.js</files>
+      <compile-flags>-maxsimplejitruncount:1 -maxinterpretcount:1 -forcejitloopbody -oopjit-</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>bugsimplepathbrfold4.js</files>
+      <compile-flags> -loopinterpretcount:1 -bgjit- -maxsimplejitruncount:1 -maxinterpretcount:1 -oopjit-</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>bugsimplepathbrfoldgetter.js</files>
+      <baseline>bugsimplepathbrfoldgetter.baseline</baseline>
+      <tags>exclude_dynapogo,exclude_nonative</tags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>bugconstfoldundefined.js</files>
+      <baseline>bugconstfoldundefined.baseline</baseline>
+      <compile-flags>-maxinterpretcount:6 -maxsimplejitruncount:4 -werexceptionsupport -oopjit-  -mic:1 -off:simplejit -forcejitloopbody</compile-flags>
+      <tags>exclude_dynapogo,exclude_nonative</tags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>bcebug.js</files>
+      <compile-flags>-mic:1 -off:simplejit -bgjit- -lic:1</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>rembug.js</files>
+      <compile-flags>-maxinterpretcount:1 -maxsimplejitruncount:1  -loopinterpretcount:1 -oopjit- -bgjit-</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>pathdepbug.js</files>
+      <compile-flags>-maxinterpretcount:1 -maxsimplejitruncount:1  -on:CaptureByteCodeRegUse  -off:aggressiveinttypespec</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>lengthsymstorebug.js</files>
+      <compile-flags>-mic:1 -off:simplejit</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>valuetypegap.js</files>
+      <compile-flags>-maxinterpretcount:1 -maxsimplejitruncount:1 -force:inline</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>aux_slot_type_transition.js</files>
+      <compile-flags>-maxinterpretcount:1 -maxsimplejitruncount:1</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>argrestoreintry.js</files>
+      <compile-flags>-maxinterpretcount:1 -maxsimplejitruncount:1</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>aux_slot_type_transition_2.js</files>
+      <compile-flags>-maxinterpretcount:1 -maxsimplejitruncount:1</compile-flags>
     </default>
   </test>
 </regress-exe>

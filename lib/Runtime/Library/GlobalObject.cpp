@@ -13,8 +13,8 @@
 #include "Types/SimpleDictionaryPropertyDescriptor.h"
 #include "Types/SimpleDictionaryTypeHandler.h"
 
-namespace Js
-{
+using namespace Js;
+
     GlobalObject * GlobalObject::New(ScriptContext * scriptContext)
     {
         SimpleDictionaryTypeHandler* globalTypeHandler = SimpleDictionaryTypeHandler::New(
@@ -45,7 +45,8 @@ namespace Js
     void GlobalObject::Initialize(ScriptContext * scriptContext)
     {
         Assert(type->javascriptLibrary == nullptr);
-        JavascriptLibrary* localLibrary = RecyclerNewFinalized(scriptContext->GetRecycler(), JavascriptLibrary, this);
+        Recycler * recycler = scriptContext->GetRecycler();
+        JavascriptLibrary* localLibrary = RecyclerNewFinalized(recycler, JavascriptLibrary, this, recycler);
         scriptContext->SetLibrary(localLibrary);
         type->javascriptLibrary = localLibrary;
         scriptContext->InitializeCache();
@@ -53,36 +54,29 @@ namespace Js
         library = localLibrary;
     }
 
-    bool GlobalObject::Is(Var aValue)
-    {
-        return RecyclableObject::Is(aValue) && (RecyclableObject::UnsafeFromVar(aValue)->GetTypeId() == TypeIds_GlobalObject);
-    }
-
-    GlobalObject* GlobalObject::FromVar(Var aValue)
-    {
-        AssertOrFailFastMsg(Is(aValue), "Ensure var is actually a 'GlobalObject'");
-        return static_cast<GlobalObject*>(aValue);
-    }
-
-    GlobalObject* GlobalObject::UnsafeFromVar(Var aValue)
-    {
-        AssertMsg(Is(aValue), "Ensure var is actually a 'GlobalObject'");
-        return static_cast<GlobalObject*>(aValue);
-    }
-
     HRESULT GlobalObject::SetDirectHostObject(RecyclableObject* hostObject, RecyclableObject* secureDirectHostObject)
     {
         HRESULT hr = S_OK;
+
+        this->directHostObject = hostObject;
+        this->secureDirectHostObject = secureDirectHostObject;
 
         BEGIN_TRANSLATE_OOM_TO_HRESULT_NESTED
         {
             // In fastDOM scenario, we should use the host object to lookup the prototype.
             this->SetPrototype(library->GetNull());
+
+            // Host can call to set the direct host object after the GlobalObject has been initialized but
+            // before user script has run. (This happens even before the previous call to SetPrototype)
+            // If that happens, we'll need to update the 'globalThis' property to point to the secure
+            // host object so that we don't hand a reference to the bare GlobalObject out to user script.
+            if (this->GetScriptContext()->GetConfig()->IsESGlobalThisEnabled())
+            {
+                this->SetProperty(PropertyIds::globalThis, this->ToThis(), PropertyOperation_None, nullptr);
+            }
         }
         END_TRANSLATE_OOM_TO_HRESULT(hr)
 
-        this->directHostObject = hostObject;
-        this->secureDirectHostObject = secureDirectHostObject;
         return hr;
     }
 
@@ -157,7 +151,7 @@ namespace Js
         const char16 *source = nullptr;
         size_t sourceLength = 0;
 
-        if (Js::JavascriptString::Is(codeVar))
+        if (Js::VarIs<Js::JavascriptString>(codeVar))
         {
             codeStringVar = (Js::JavascriptString *)codeVar;
             source = codeStringVar->GetString();
@@ -574,7 +568,7 @@ namespace Js
         }
 
         Var evalArg = args[1];
-        if (!JavascriptString::Is(evalArg))
+        if (!VarIs<JavascriptString>(evalArg))
         {
             // "If x is not a string value, return x."
             return evalArg;
@@ -587,16 +581,16 @@ namespace Js
 #endif
 
         ScriptFunction *pfuncScript = nullptr;
-        JavascriptString *argString = JavascriptString::FromVar(evalArg);
+        JavascriptString *argString = VarTo<JavascriptString>(evalArg);
         char16 const * sourceString = argString->GetSz();
         charcount_t sourceLen = argString->GetLength();
         FastEvalMapString key(sourceString, sourceLen, moduleID, strictMode, isLibraryCode);
 
 
-
         // PropertyString's buffer references to PropertyRecord's inline buffer, if both PropertyString and PropertyRecord are collected
         // we'll leave the PropertyRecord's interior buffer pointer in the EvalMap. So do not use evalmap if we are evaluating PropertyString
         bool useEvalMap = !VirtualTableInfo<PropertyString>::HasVirtualTable(argString) && debugEvalScriptContext == nullptr; // Don't use the cache in case of debugEval
+
         bool found = useEvalMap && scriptContext->IsInEvalMap(key, isIndirect, &pfuncScript);
         if (!found || (!isIndirect && pfuncScript->GetEnvironment() != &NullFrameDisplay))
         {
@@ -607,6 +601,11 @@ namespace Js
                 grfscr |= fscrIsLibraryCode;
             }
 
+            if (!(grfscr & fscrConsoleScopeEval))
+            {
+                grfscr |= fscrCanDeferFncParse;
+            }
+
             pfuncScript = library->GetGlobalObject()->EvalHelper(scriptContext, argString->GetSz(), argString->GetLength(), moduleID,
                 grfscr, Constants::EvalCode, doRegisterDocument, isIndirect, strictMode);
 
@@ -615,7 +614,7 @@ namespace Js
                 // This is console scope scenario. DebugEval script context is on the top of the stack. But we are going
                 // to execute the user script from target script context. In order to fix the script context stack we
                 // need to marshall the function object.
-                pfuncScript = ScriptFunction::FromVar(CrossSite::MarshalVar(debugEvalScriptContext, pfuncScript));
+                pfuncScript = VarTo<ScriptFunction>(CrossSite::MarshalVar(debugEvalScriptContext, pfuncScript));
             }
 
             if (useEvalMap && !found)
@@ -687,41 +686,6 @@ namespace Js
             pfuncScript->GetFunctionProxy()->EnsureDeserialized();
         }
 
-        if (pfuncScript->GetFunctionBody()->GetHasThis())
-        {
-            // The eval expression refers to "this"
-            if (args.Info.Flags & CallFlags_ExtraArg)
-            {
-                JavascriptFunction* pfuncCaller = nullptr;
-                // If we are non-hidden call to eval then look for the "this" object in the frame display if the caller is a lambda else get "this" from the caller's frame.
-
-                bool successful = false;
-                if (JavascriptStackWalker::GetCaller(&pfuncCaller, scriptContext))
-                {
-                FunctionInfo* functionInfo = pfuncCaller->GetFunctionInfo();
-                if (functionInfo != nullptr && (functionInfo->IsLambda() || functionInfo->IsClassConstructor()))
-                {
-                    Var defaultInstance = (moduleID == kmodGlobal) ? JavascriptOperators::OP_LdRoot(scriptContext)->ToThis() : (Var)JavascriptOperators::GetModuleRoot(moduleID, scriptContext);
-                    varThis = JavascriptOperators::OP_GetThisScoped(environment, defaultInstance, scriptContext);
-                    UpdateThisForEval(varThis, moduleID, scriptContext, strictMode);
-                        successful = true;
-                }
-                }
-
-                if (!successful)
-                {
-                    JavascriptStackWalker::GetThis(&varThis, moduleID, scriptContext);
-                    UpdateThisForEval(varThis, moduleID, scriptContext, strictMode);
-                }
-            }
-            else
-            {
-                // The expression, which refers to "this", is evaluated by an indirect eval.
-                // Set "this" to the current module root.
-                varThis = JavascriptOperators::OP_GetThis(scriptContext->GetLibrary()->GetUndefined(), moduleID, scriptContext);
-            }
-        }
-
         if (pfuncScript->HasSuperReference())
         {
             // Indirect evals cannot have a super reference.
@@ -734,16 +698,9 @@ namespace Js
         return library->GetGlobalObject()->ExecuteEvalParsedFunction(pfuncScript, environment, varThis, scriptContext);
     }
 
-    void GlobalObject::UpdateThisForEval(Var &varThis, ModuleID moduleID, ScriptContext *scriptContext, BOOL strictMode)
+    void GlobalObject::UpdateThisForEval(Var &varThis, ModuleID moduleID, ScriptContext *scriptContext)
     {
-        if (strictMode)
-        {
-            varThis = JavascriptOperators::OP_StrictGetThis(varThis, scriptContext);
-        }
-        else
-        {
-            varThis = JavascriptOperators::OP_GetThisNoFastPath(varThis, moduleID, scriptContext);
-        }
+        varThis = JavascriptOperators::OP_GetThisNoFastPath(varThis, moduleID, scriptContext);
     }
 
 
@@ -759,7 +716,12 @@ namespace Js
             // Executing the eval causes the scope chain to escape.
             pfuncScript->InvalidateCachedScopeChain();
         }
-        Var varResult = CALL_FUNCTION(scriptContext->GetThreadContext(), pfuncScript, CallInfo(CallFlags_Eval, 1), varThis);
+        Var varResult = nullptr;
+        BEGIN_SAFE_REENTRANT_CALL(scriptContext->GetThreadContext())
+        {
+            varResult = CALL_FUNCTION(scriptContext->GetThreadContext(), pfuncScript, CallInfo(CallFlags_Eval, 1), varThis);
+        }
+        END_SAFE_REENTRANT_CALL
         pfuncScript->SetEnvironment((FrameDisplay*)&NullFrameDisplay);
         return varResult;
     }
@@ -805,10 +767,10 @@ namespace Js
             ArenaAllocator tempAlloc(_u("ValidateSyntaxArena"), scriptContext->GetThreadContext()->GetPageAllocator(), Throw::OutOfMemory);
 
             size_t cchSource = sourceLength;
-            size_t cbUtf8Buffer = UInt32Math::AddMul<1, 3>(sourceLength);
+            size_t cbUtf8Buffer = UInt32Math::MulAdd<3, 1>(sourceLength);
             LPUTF8 utf8Source = AnewArray(&tempAlloc, utf8char_t, cbUtf8Buffer);
             Assert(cchSource < MAXLONG);
-            size_t cbSource = utf8::EncodeIntoAndNullTerminate(utf8Source, source, static_cast< charcount_t >(cchSource));
+            size_t cbSource = utf8::EncodeIntoAndNullTerminate<utf8::Utf8EncodingKind::Cesu8>(utf8Source, cbUtf8Buffer, source, static_cast<charcount_t>(cchSource));
             utf8Source = reinterpret_cast< LPUTF8 >( tempAlloc.Realloc(utf8Source, cbUtf8Buffer, cbSource + 1) );
 
             Parser parser(scriptContext);
@@ -872,18 +834,18 @@ namespace Js
         HRESULT hrCodeGen = S_OK;
         CompileScriptException se;
         Js::ParseableFunctionInfo * funcBody = NULL;
-
+        uint sourceIndex = Constants::InvalidSourceIndex;
         BEGIN_LEAVE_SCRIPT_INTERNAL(scriptContext);
         BEGIN_TRANSLATE_EXCEPTION_TO_HRESULT
         {
             uint cchSource = sourceLength;
-            size_t cbUtf8Buffer = UInt32Math::AddMul<1, 3>(cchSource);
+            size_t cbUtf8Buffer = UInt32Math::MulAdd<3, 1>(cchSource);
 
             ArenaAllocator tempArena(_u("EvalHelperArena"), scriptContext->GetThreadContext()->GetPageAllocator(), Js::Throw::OutOfMemory);
             LPUTF8 utf8Source = AnewArray(&tempArena, utf8char_t, cbUtf8Buffer);
 
             Assert(cchSource < MAXLONG);
-            size_t cbSource = utf8::EncodeIntoAndNullTerminate(utf8Source, source, static_cast< charcount_t >(cchSource));
+            size_t cbSource = utf8::EncodeIntoAndNullTerminate<utf8::Utf8EncodingKind::Cesu8>(utf8Source, cbUtf8Buffer, source, static_cast<charcount_t>(cchSource));
             Assert(cbSource + 1 <= cbUtf8Buffer);
 
             SRCINFO const * pSrcInfo = scriptContext->GetModuleSrcInfo(moduleID);
@@ -904,7 +866,7 @@ namespace Js
             if ((ULONG)sourceLength > deferParseThreshold && !PHASE_OFF1(Phase::DeferParsePhase))
             {
                 // Defer function bodies declared inside large dynamic blocks.
-                grfscr |= fscrDeferFncParse;
+                grfscr |= fscrWillDeferFncParse;
             }
 
             grfscr = grfscr | fscrDynamicCode;
@@ -920,7 +882,7 @@ namespace Js
                 Js::AutoDynamicCodeReference dynamicFunctionReference(scriptContext);
 
                 Assert(cchSource < MAXLONG);
-                uint sourceIndex = scriptContext->SaveSourceNoCopy(sourceInfo, cchSource, true);
+                sourceIndex = scriptContext->SaveSourceNoCopy(sourceInfo, cchSource, true);
 
                 // Tell byte code gen not to attempt to interact with the caller's context if this is indirect eval.
                 // TODO: Handle strict mode.
@@ -964,8 +926,13 @@ namespace Js
             }
             else if (hrCodeGen == JSERR_AsmJsCompileError)
             {
-                // if asm.js compilation succeeded, retry with asm.js disabled
+                // if asm.js compilation failed, retry with asm.js disabled
                 grfscr |= fscrNoAsmJs;
+                if (sourceIndex != Constants::InvalidSourceIndex)
+                {
+                    // If we registered source, we should remove it or we will register another source info
+                    scriptContext->RemoveSource(sourceIndex);
+                }
                 return DefaultEvalHelper(scriptContext, source, sourceLength, moduleID, grfscr, pszTitle, registerDocument, isIndirect, strictMode);
             }
             JavascriptError::MapAndThrowError(scriptContext, hrCodeGen);
@@ -1158,6 +1125,7 @@ namespace Js
 
     Var GlobalObject::EntryParseInt(RecyclableObject* function, CallInfo callInfo, ...)
     {
+        JIT_HELPER_REENTRANT_HEADER(GlobalObject_ParseInt);
         PROBE_STACK(function->GetScriptContext(), Js::Constants::MinStackDefault);
 
         ARGUMENTS(args, callInfo);
@@ -1205,9 +1173,9 @@ namespace Js
         }
 
         // convert input to a string
-        if (JavascriptString::Is(args[1]))
+        if (VarIs<JavascriptString>(args[1]))
         {
-            str = JavascriptString::FromVar(args[1]);
+            str = VarTo<JavascriptString>(args[1]);
         }
         else
         {
@@ -1228,6 +1196,7 @@ namespace Js
 
         Var result = str->ToInteger(radix);
         return result;
+        JIT_HELPER_END(GlobalObject_ParseInt);
     }
 
     Var GlobalObject::EntryParseFloat(RecyclableObject* function, CallInfo callInfo, ...)
@@ -1267,9 +1236,9 @@ namespace Js
         }
 
         // convert input to a string
-        if (JavascriptString::Is(args[1]))
+        if (VarIs<JavascriptString>(args[1]))
         {
-            str = JavascriptString::FromVar(args[1]);
+            str = VarTo<JavascriptString>(args[1]);
         }
         else
         {
@@ -1538,7 +1507,6 @@ LHexError:
 
             bs->AppendChars(chw);
         }
-
         LEAVE_PINNED_SCOPE();   // src
 
         return bs;
@@ -1641,10 +1609,10 @@ LHexError:
         PROBE_STACK(function->GetScriptContext(), Js::Constants::MinStackDefault);
         ARGUMENTS(args, callInfo);
 
-        TTDAssert(args.Info.Count >= 2 && Js::JavascriptString::Is(args[1]), "Bad arguments!!!");
+        TTDAssert(args.Info.Count >= 2 && Js::VarIs<Js::JavascriptString>(args[1]), "Bad arguments!!!");
 
-        Js::JavascriptString* jsString = Js::JavascriptString::FromVar(args[1]);
-        bool doPrint = (args.Info.Count == 3) && Js::JavascriptBoolean::Is(args[2]) && (Js::JavascriptBoolean::FromVar(args[2])->GetValue());
+        Js::JavascriptString* jsString = Js::VarTo<Js::JavascriptString>(args[1]);
+        bool doPrint = (args.Info.Count == 3) && Js::VarIs<Js::JavascriptBoolean>(args[2]) && (Js::VarTo<Js::JavascriptBoolean>(args[2])->GetValue());
 
         if(function->GetScriptContext()->ShouldPerformReplayAction())
         {
@@ -1674,9 +1642,20 @@ LHexError:
         PROBE_STACK(function->GetScriptContext(), Js::Constants::MinStackDefault);
         ARGUMENTS(args, callInfo);
 
-        if(function->GetScriptContext()->ShouldPerformRecordOrReplayAction() && !function->GetScriptContext()->GetThreadContext()->TTDLog->SuppressDiagnosticTracesDuringInnerLoop())
+        if (function->GetScriptContext()->ShouldPerformReplayAction())
         {
-            return function->GetScriptContext()->GetLibrary()->GetTrue();
+            TTD::EventLog* ttlog = function->GetScriptContext()->GetThreadContext()->TTDLog;
+            bool isEnabled = ttlog->ReplayTTDFetchAutoTraceStatusLogEvent();
+
+            return function->GetScriptContext()->GetLibrary()->CreateBoolean(isEnabled);
+        }
+        else if (function->GetScriptContext()->ShouldPerformRecordAction())
+        {
+            TTD::EventLog* ttlog = function->GetScriptContext()->GetThreadContext()->TTDLog;
+            bool isEnabled = ttlog->GetAutoTraceEnabled();
+            ttlog->RecordTTDFetchAutoTraceStatusEvent(isEnabled);
+
+            return function->GetScriptContext()->GetLibrary()->CreateBoolean(isEnabled);
         }
         else
         {
@@ -1692,7 +1671,7 @@ LHexError:
 
         Js::JavascriptLibrary* jslib = function->GetScriptContext()->GetLibrary();
 
-        if(args.Info.Count != 2 || !Js::JavascriptString::Is(args[1]))
+        if(args.Info.Count != 2 || !Js::VarIs<Js::JavascriptString>(args[1]))
         {
             return jslib->GetFalse();
         }
@@ -1706,7 +1685,7 @@ LHexError:
 
         if(function->GetScriptContext()->ShouldPerformRecordAction())
         {
-            Js::JavascriptString* jsString = Js::JavascriptString::FromVar(args[1]);
+            Js::JavascriptString* jsString = Js::VarTo<Js::JavascriptString>(args[1]);
             function->GetScriptContext()->GetThreadContext()->TTDLog->RecordEmitLogEvent(jsString);
 
             return jslib->GetTrue();
@@ -1750,7 +1729,7 @@ LHexError:
             }
 
             //get a pattern which doesn't contain leading and trailing stars
-            subPattern = JavascriptString::FromVar(JavascriptString::SubstringCore(pattern, idxStart, idxEnd - idxStart, scriptContext));
+            subPattern = VarTo<JavascriptString>(JavascriptString::SubstringCore(pattern, idxStart, idxEnd - idxStart, scriptContext));
 
             uint index = JavascriptString::strstr(propertyName, subPattern, false);
 
@@ -1832,7 +1811,7 @@ LHexError:
             (this->hostObject && JavascriptOperators::GetProperty(this->hostObject, propertyId, value, requestContext, info));
     }
 
-    BOOL GlobalObject::GetAccessors(PropertyId propertyId, Var* getter, Var* setter, ScriptContext * requestContext)
+    _Check_return_ _Success_(return) BOOL GlobalObject::GetAccessors(PropertyId propertyId, _Outptr_result_maybenull_ Var* getter, _Outptr_result_maybenull_ Var* setter, ScriptContext* requestContext)
     {
         if (DynamicObject::GetAccessors(propertyId, getter, setter, requestContext))
         {
@@ -2341,4 +2320,3 @@ LHexError:
         TTD::NSSnapObjects::StdExtractSetKindSpecificInfo<void*, TTD::NSSnapObjects::SnapObjectType::SnapWellKnownObject>(objData, nullptr);
     }
 #endif
-}

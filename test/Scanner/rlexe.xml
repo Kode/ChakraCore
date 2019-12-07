@@ -4,13 +4,19 @@
     <default>
       <files>NumericLiteralSuffix.js</files>
       <compile-flags>-args summary -endargs</compile-flags>
-      <tags>require_winglob</tags> <!-- Microsoft/ChakraCore#3777: Fix this test under ICU -->
     </default>
   </test>
   <test>
     <default>
       <files>InvalidCharacter.js</files>
       <baseline>InvalidCharacter.baseline</baseline>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>Hashbang.js</files>
+      <compile-flags>-args summary -endargs -ESHashbang</compile-flags>
+      <tags>exclude_jshost</tags>
     </default>
   </test>
 </regress-exe>

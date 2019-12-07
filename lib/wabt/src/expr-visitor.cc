@@ -229,11 +229,6 @@ Result ExprVisitor::HandleDefaultState(Expr* expr) {
       CHECK_RESULT(delegate_->OnConvertExpr(cast<ConvertExpr>(expr)));
       break;
 
-    case ExprType::CurrentMemory:
-      CHECK_RESULT(
-          delegate_->OnCurrentMemoryExpr(cast<CurrentMemoryExpr>(expr)));
-      break;
-
     case ExprType::Drop:
       CHECK_RESULT(delegate_->OnDropExpr(cast<DropExpr>(expr)));
       break;
@@ -244,10 +239,6 @@ Result ExprVisitor::HandleDefaultState(Expr* expr) {
 
     case ExprType::GetLocal:
       CHECK_RESULT(delegate_->OnGetLocalExpr(cast<GetLocalExpr>(expr)));
-      break;
-
-    case ExprType::GrowMemory:
-      CHECK_RESULT(delegate_->OnGrowMemoryExpr(cast<GrowMemoryExpr>(expr)));
       break;
 
     case ExprType::If: {
@@ -275,6 +266,42 @@ Result ExprVisitor::HandleDefaultState(Expr* expr) {
       break;
     }
 
+    case ExprType::MemoryCopy:
+      CHECK_RESULT(delegate_->OnMemoryCopyExpr(cast<MemoryCopyExpr>(expr)));
+      break;
+
+    case ExprType::MemoryDrop:
+      CHECK_RESULT(delegate_->OnMemoryDropExpr(cast<MemoryDropExpr>(expr)));
+      break;
+
+    case ExprType::MemoryFill:
+      CHECK_RESULT(delegate_->OnMemoryFillExpr(cast<MemoryFillExpr>(expr)));
+      break;
+
+    case ExprType::MemoryGrow:
+      CHECK_RESULT(delegate_->OnMemoryGrowExpr(cast<MemoryGrowExpr>(expr)));
+      break;
+
+    case ExprType::MemoryInit:
+      CHECK_RESULT(delegate_->OnMemoryInitExpr(cast<MemoryInitExpr>(expr)));
+      break;
+
+    case ExprType::MemorySize:
+      CHECK_RESULT(delegate_->OnMemorySizeExpr(cast<MemorySizeExpr>(expr)));
+      break;
+
+    case ExprType::TableCopy:
+      CHECK_RESULT(delegate_->OnTableCopyExpr(cast<TableCopyExpr>(expr)));
+      break;
+
+    case ExprType::TableDrop:
+      CHECK_RESULT(delegate_->OnTableDropExpr(cast<TableDropExpr>(expr)));
+      break;
+
+    case ExprType::TableInit:
+      CHECK_RESULT(delegate_->OnTableInitExpr(cast<TableInitExpr>(expr)));
+      break;
+
     case ExprType::Nop:
       CHECK_RESULT(delegate_->OnNopExpr(cast<NopExpr>(expr)));
       break;
@@ -285,6 +312,15 @@ Result ExprVisitor::HandleDefaultState(Expr* expr) {
 
     case ExprType::Return:
       CHECK_RESULT(delegate_->OnReturnExpr(cast<ReturnExpr>(expr)));
+      break;
+
+    case ExprType::ReturnCall:
+      CHECK_RESULT(delegate_->OnReturnCallExpr(cast<ReturnCallExpr>(expr)));
+      break;
+
+    case ExprType::ReturnCallIndirect:
+      CHECK_RESULT(delegate_->OnReturnCallIndirectExpr(
+          cast<ReturnCallIndirectExpr>(expr)));
       break;
 
     case ExprType::Select:

@@ -79,7 +79,7 @@ public:
         __in PSCRIPTCONTEXT_HANDLE scriptContextInfoAddress);
 
     HRESULT FreeAllocation(
-        __in PTHREADCONTEXT_HANDLE threadContextInfoAddress,
+        __in PSCRIPTCONTEXT_HANDLE scriptContextInfoAddress,
         __in intptr_t codeAddress);
 
     HRESULT SetIsPRNGSeeded(
@@ -133,7 +133,7 @@ private:
         __in UUID* connectionUuid,
         __out RPC_BINDING_HANDLE* bindingHandle);
 
-    HRESULT ConnectProcess();
+    HRESULT ConnectProcess(RPC_BINDING_HANDLE rpcBindingHandle);
 
     RPC_BINDING_HANDLE m_rpcBindingHandle;
     UUID m_jitConnectionId;
@@ -213,7 +213,7 @@ public:
         { Assert(false); return E_FAIL; }
 
     HRESULT FreeAllocation(
-        __in PTHREADCONTEXT_HANDLE threadContextInfoAddress,
+        __in PSCRIPTCONTEXT_HANDLE scriptContextInfoAddress,
         __in intptr_t codeAddress)
         { Assert(false); return E_FAIL; }
 

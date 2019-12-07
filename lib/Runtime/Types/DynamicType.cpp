@@ -150,7 +150,7 @@ namespace Js
             Assert(this->GetTypeHandler()->IsSharable());
             return true;
         }
-        if (this->GetTypeHandler()->IsSharable())
+        if (this->GetTypeHandler()->IsSharable() && this->GetTypeHandler()->GetMayBecomeShared())
         {
             LockType();
             this->GetTypeHandler()->ShareTypeHandler(this->GetScriptContext());
@@ -158,6 +158,11 @@ namespace Js
             return true;
         }
         return false;
+    }
+
+    DynamicTypeHandler * DynamicType::DuplicateTypeHandler()
+    {
+        return GetTypeHandler()->Clone(this->GetRecycler());
     }
 
     bool
@@ -402,7 +407,9 @@ namespace Js
         Var aValue = nullptr;
         if (JavascriptOperators::CheckIfObjectAndProtoChainHasNoSpecialProperties(this))
         {
-            if (this->GetPrototype() == this->GetLibrary()->GetObjectPrototype())
+            if (this->GetPrototype() == requestContext->GetLibrary()->GetObjectPrototype() &&
+                !this->IsCrossSiteObject() &&
+                !requestContext->GetLibrary()->GetObjectPrototype()->IsCrossSiteObject())
             {
                 aValue = (propertyId == PropertyIds::valueOf)
                     ? requestContext->GetLibrary()->GetObjectValueOfFunction()
@@ -447,7 +454,7 @@ namespace Js
     {
         if (JavascriptConversion::IsCallable(toPrimitiveFunction))
         {
-            RecyclableObject* toStringFunction = RecyclableObject::FromVar(toPrimitiveFunction);
+            RecyclableObject* toStringFunction = VarTo<RecyclableObject>(toPrimitiveFunction);
 
             ThreadContext * threadContext = requestContext->GetThreadContext();
             Var aResult = threadContext->ExecuteImplicitCall(toStringFunction, ImplicitCall_ToPrimitive, [=]() -> Js::Var
@@ -480,7 +487,6 @@ namespace Js
         if (this->HasObjectArray())
         {
             arrayObject = this->GetObjectArrayOrFlagsAsArray();
-            Assert(arrayObject->GetPropertyCount() == 0);
         }
         return enumerator->Initialize(prefixEnumerator, arrayObject, this, flags, requestContext, enumeratorCache);
     }
@@ -495,7 +501,7 @@ namespace Js
         return GetTypeHandler()->SetAccessors(this, propertyId, getter, setter, flags);
     }
 
-    BOOL DynamicObject::GetAccessors(PropertyId propertyId, Var *getter, Var *setter, ScriptContext * requestContext)
+    _Check_return_ _Success_(return) BOOL DynamicObject::GetAccessors(PropertyId propertyId, _Outptr_result_maybenull_ Var* getter, _Outptr_result_maybenull_ Var* setter, ScriptContext* requestContext)
     {
         return GetTypeHandler()->GetAccessors(this, propertyId, getter, setter);
     }
@@ -607,14 +613,19 @@ namespace Js
     }
 #endif
 
-    void DynamicObject::RemoveFromPrototype(ScriptContext * requestContext)
+    bool DynamicObject::ClearProtoCachesWereInvalidated()
     {
-        GetTypeHandler()->RemoveFromPrototype(this, requestContext);
+        return GetTypeHandler()->ClearProtoCachesWereInvalidated();
     }
 
-    void DynamicObject::AddToPrototype(ScriptContext * requestContext)
+    void DynamicObject::RemoveFromPrototype(ScriptContext * requestContext, bool * allProtoCachesInvalidated)
     {
-        GetTypeHandler()->AddToPrototype(this, requestContext);
+        GetTypeHandler()->RemoveFromPrototype(this, requestContext, allProtoCachesInvalidated);
+    }
+
+    void DynamicObject::AddToPrototype(ScriptContext * requestContext, bool * allProtoCachesInvalidated)
+    {
+        GetTypeHandler()->AddToPrototype(this, requestContext, allProtoCachesInvalidated);
     }
 
     void DynamicObject::SetPrototype(RecyclableObject* newPrototype)

@@ -20,14 +20,12 @@ namespace Js
         ScriptContext* scriptContext, bool isLibraryCode, Js::Var scriptSource):
         sourceHolder(mappableSource),
         m_cchLength(cchLength),
-        m_pHostBuffer(nullptr),
         m_srcInfo(srcInfo),
         m_secondaryHostSourceContext(secondaryHostSourceContext),
 #ifdef ENABLE_SCRIPT_DEBUGGING
         m_debugDocument(nullptr),
 #endif
         m_sourceInfoId(scriptContext->GetThreadContext()->NewSourceInfoNumber()),
-        m_hasHostBuffer(false),
         m_isCesu8(false),
         m_isLibraryCode(isLibraryCode),
         m_isXDomain(false),
@@ -43,7 +41,8 @@ namespace Js
         debugModeSourceLength(0),
         m_isInDebugMode(false),
 #endif
-        callerUtf8SourceInfo(nullptr)
+        callerUtf8SourceInfo(nullptr),
+        boundedPropertyRecordHashSet(scriptContext->GetRecycler())
 #ifndef NTBUILD
         ,sourceRef(scriptSource)
 #endif
@@ -101,22 +100,8 @@ namespace Js
 #ifndef NTBUILD
         this->sourceRef = nullptr;
 #endif
-        if (this->m_hasHostBuffer)
-        {
-            PERF_COUNTER_DEC(Basic, ScriptCodeBufferCount);
-            HeapFree(GetProcessHeap(), 0 , m_pHostBuffer);
-            m_pHostBuffer = nullptr;
-        }
     };
 
-    void
-    Utf8SourceInfo::SetHostBuffer(BYTE * pcszCode)
-    {
-        Assert(!this->m_hasHostBuffer);
-        Assert(this->m_pHostBuffer == nullptr);
-        this->m_hasHostBuffer = true;
-        this->m_pHostBuffer = pcszCode;
-    }
     enum
     {
         fsiHostManaged = 0x01,
@@ -251,29 +236,6 @@ namespace Js
         ISourceHolder* sourceHolder = RecyclerNew(scriptContext->GetRecycler(), SimpleSourceHolder, utf8String, numBytes);
 
         return NewWithHolder(scriptContext, sourceHolder, length, srcInfo, isLibraryCode, scriptSource);
-    }
-
-
-    Utf8SourceInfo*
-    Utf8SourceInfo::Clone(ScriptContext* scriptContext, const Utf8SourceInfo* sourceInfo)
-    {
-        Utf8SourceInfo* newSourceInfo = Utf8SourceInfo::NewWithHolder(scriptContext,
-            sourceInfo->GetSourceHolder()->Clone(scriptContext), sourceInfo->m_cchLength,
-            SRCINFO::Copy(scriptContext->GetRecycler(), sourceInfo->GetSrcInfo()),
-            sourceInfo->m_isLibraryCode);
-        newSourceInfo->m_isXDomain = sourceInfo->m_isXDomain;
-        newSourceInfo->m_isXDomainString = sourceInfo->m_isXDomainString;
-        newSourceInfo->m_isLibraryCode = sourceInfo->m_isLibraryCode;
-        newSourceInfo->SetIsCesu8(sourceInfo->GetIsCesu8());
-        newSourceInfo->m_lineOffsetCache = sourceInfo->m_lineOffsetCache;
-
-#ifdef ENABLE_SCRIPT_DEBUGGING
-        if (scriptContext->IsScriptContextInDebugMode() && !newSourceInfo->GetIsLibraryCode())
-        {
-            newSourceInfo->SetInDebugMode(true);
-        }
-#endif
-        return newSourceInfo;
     }
 
     HRESULT Utf8SourceInfo::EnsureLineOffsetCacheNoThrow()

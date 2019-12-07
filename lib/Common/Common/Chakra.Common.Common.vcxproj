@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Condition="'$(ChakraBuildPathImported)'!='true'" Project="$(SolutionDir)Chakra.Build.Paths.props" />
   <Import Project="$(BuildConfigPropsPath)Chakra.Build.ProjectConfiguration.props" />
@@ -34,12 +34,11 @@
       </AdditionalIncludeDirectories>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>CommonCommonPch.h</PrecompiledHeaderFile>
-      <!-- # Check out https://osgwiki.com/wiki/Dev_14_Migration for more details about -Zc:implicitNoexcept- -->
-      <AdditionalOptions>-Zc:implicitNoexcept- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="$(MSBuildThisFileDirectory)CfgLogger.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)CompressionUtilities.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)DateUtilities.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)Event.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)Int32Math.cpp" />
@@ -61,6 +60,7 @@
     <ClInclude Include="ByteSwap.h" />
     <ClInclude Include="CommonCommonPch.h" />
     <ClInclude Include="CfgLogger.h" />
+    <ClInclude Include="CompressionUtilities.h" />
     <ClInclude Include="DateUtilities.h" />
     <ClInclude Include="Event.h" />
     <ClInclude Include="GetCurrentFrameId.h" />
@@ -69,6 +69,7 @@
     <ClInclude Include="MathUtil.h" />
     <ClInclude Include="NumberUtilities.h" />
     <ClInclude Include="NumberUtilitiesBase.h" />
+    <ClInclude Include="ObservableValue.h" />
     <ClInclude Include="RejitReason.h" />
     <ClInclude Include="RejitReasons.h" />
     <ClInclude Include="SmartFpuControl.h" />

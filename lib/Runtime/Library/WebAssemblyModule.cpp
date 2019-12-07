@@ -47,29 +47,6 @@ WebAssemblyModule::WebAssemblyModule(Js::ScriptContext* scriptContext, const byt
 }
 
 /* static */
-bool
-WebAssemblyModule::Is(Var value)
-{
-    return JavascriptOperators::GetTypeId(value) == TypeIds_WebAssemblyModule;
-}
-
-/* static */
-WebAssemblyModule *
-WebAssemblyModule::FromVar(Var value)
-{
-    AssertOrFailFast(WebAssemblyModule::Is(value));
-    return static_cast<WebAssemblyModule*>(value);
-}
-
-/* static */
-WebAssemblyModule *
-WebAssemblyModule::UnsafeFromVar(Var value)
-{
-    Assert(WebAssemblyModule::Is(value));
-    return static_cast<WebAssemblyModule*>(value);
-}
-
-/* static */
 Var
 WebAssemblyModule::NewInstance(RecyclableObject* function, CallInfo callInfo, ...)
 {
@@ -92,7 +69,7 @@ WebAssemblyModule::NewInstance(RecyclableObject* function, CallInfo callInfo, ..
     {
         JavascriptError::ThrowTypeError(scriptContext, WASMERR_NeedBufferSource);
     }
-    
+
     WebAssemblySource src(args[1], true, scriptContext);
     return CreateModule(scriptContext, &src);
 }
@@ -108,11 +85,11 @@ WebAssemblyModule::EntryExports(RecyclableObject* function, CallInfo callInfo, .
 
     Assert(!(callInfo.Flags & CallFlags_New));
 
-    if (args.Info.Count < 2 || !WebAssemblyModule::Is(args[1]))
+    if (args.Info.Count < 2 || !VarIs<WebAssemblyModule>(args[1]))
     {
         JavascriptError::ThrowTypeError(scriptContext, WASMERR_NeedModule);
     }
-    WebAssemblyModule * module = WebAssemblyModule::FromVar(args[1]);
+    WebAssemblyModule * module = VarTo<WebAssemblyModule>(args[1]);
 
     Var exportArray = JavascriptOperators::NewJavascriptArrayNoArg(scriptContext);
 
@@ -140,12 +117,12 @@ WebAssemblyModule::EntryImports(RecyclableObject* function, CallInfo callInfo, .
 
     Assert(!(callInfo.Flags & CallFlags_New));
 
-    if (args.Info.Count < 2 || !WebAssemblyModule::Is(args[1]))
+    if (args.Info.Count < 2 || !VarIs<WebAssemblyModule>(args[1]))
     {
         JavascriptError::ThrowTypeError(scriptContext, WASMERR_NeedModule);
     }
 
-    WebAssemblyModule * module = WebAssemblyModule::FromVar(args[1]);
+    WebAssemblyModule * module = VarTo<WebAssemblyModule>(args[1]);
 
     Var importArray = JavascriptOperators::NewJavascriptArrayNoArg(scriptContext);
     for (uint32 i = 0; i < module->GetImportCount(); ++i)
@@ -175,18 +152,18 @@ Var WebAssemblyModule::EntryCustomSections(RecyclableObject* function, CallInfo 
 
     Assert(!(callInfo.Flags & CallFlags_New));
 
-    if (args.Info.Count < 2 || !WebAssemblyModule::Is(args[1]))
+    if (args.Info.Count < 2 || !VarIs<WebAssemblyModule>(args[1]))
     {
         JavascriptError::ThrowTypeError(scriptContext, WASMERR_NeedModule);
     }
     Var sectionNameVar = args.Info.Count > 2 ? args[2] : scriptContext->GetLibrary()->GetUndefined();
 
-    WebAssemblyModule * module = WebAssemblyModule::FromVar(args[1]);
+    WebAssemblyModule * module = VarTo<WebAssemblyModule>(args[1]);
     Var customSections = nullptr;
     // C++ compiler optimizations can optimize away the sectionName variable while still keeping a reference to the underlying
     // character buffer sectionNameBuf. The character buffer itself is managed by the recycler; however; we may move past the
     // start of the character buffer while doing the comparison in memcmp. If a GC happens during CreateArrayBuffer, the character
-    // buffer can get collected as we don't have a reference to the start of the buffer on the stack anymore. To avoid this we need 
+    // buffer can get collected as we don't have a reference to the start of the buffer on the stack anymore. To avoid this we need
     // to pin sectionName.
     ENTER_PINNED_SCOPE(JavascriptString, sectionName);
     sectionName = JavascriptConversion::ToString(sectionNameVar, scriptContext);
@@ -238,7 +215,7 @@ WebAssemblyModule::CreateModule(
         for (uint i = 0; i < webAssemblyModule->GetWasmFunctionCount(); ++i)
         {
             currentBody = webAssemblyModule->GetWasmFunctionInfo(i)->GetBody();
-            if (!PHASE_OFF(WasmDeferredPhase, currentBody))
+            if (PHASE_ENABLED(WasmDeferredPhase, currentBody))
             {
                 continue;
             }
@@ -285,7 +262,7 @@ WebAssemblyModule::ValidateModule(
 
             Wasm::WasmBytecodeGenerator::ValidateFunction(scriptContext, readerInfo);
 #if ENABLE_DEBUG_CONFIG_OPTIONS
-            if (PHASE_ON(WasmValidatePrejitPhase, body))
+            if (PHASE_ENABLED(WasmValidatePrejitPhase, body))
             {
                 CONFIG_FLAG(MaxAsmJsInterpreterRunCount) = 0;
                 WasmScriptFunction * funcObj = scriptContext->GetLibrary()->CreateWasmScriptFunction(body);
@@ -519,7 +496,12 @@ WebAssemblyModule::AttachCustomInOutTracingReader(Wasm::WasmFunctionInfo* func, 
         case Wasm::Local::I64: node.op = Wasm::wbPrintI64; break;
         case Wasm::Local::F32: node.op = Wasm::wbPrintF32; break;
         case Wasm::Local::F64: node.op = Wasm::wbPrintF64; break;
+#ifdef ENABLE_WASM_SIMD
+        // todo:: Add support to print v128 argument values
+        case Wasm::WasmTypes::V128: continue;
+#endif
         default:
+            Wasm::WasmTypes::CompileAssertCasesNoFailFast<Wasm::WasmTypes::I32, Wasm::WasmTypes::I64, Wasm::WasmTypes::F32, Wasm::WasmTypes::F64, WASM_V128_CHECK_TYPE>();
             throw Wasm::WasmCompilationException(_u("Unknown param type"));
         }
         customReader->AddNode(node);
@@ -559,11 +541,19 @@ WebAssemblyModule::AttachCustomInOutTracingReader(Wasm::WasmFunctionInfo* func, 
         case Wasm::WasmTypes::I64: node.op = Wasm::wbPrintI64; break;
         case Wasm::WasmTypes::F32: node.op = Wasm::wbPrintF32; break;
         case Wasm::WasmTypes::F64: node.op = Wasm::wbPrintF64; break;
+#ifdef ENABLE_WASM_SIMD
+        // todo:: Add support to print v128 return values
+        case Wasm::WasmTypes::V128: goto SkipReturnPrint;
+#endif
         default:
+            Wasm::WasmTypes::CompileAssertCasesNoFailFast<Wasm::WasmTypes::I32, Wasm::WasmTypes::I64, Wasm::WasmTypes::F32, Wasm::WasmTypes::F64, WASM_V128_CHECK_TYPE>();
             throw Wasm::WasmCompilationException(_u("Unknown return type"));
         }
         customReader->AddNode(node);
     }
+#ifdef ENABLE_WASM_SIMD
+SkipReturnPrint:
+#endif
     endNode.op = Wasm::wbPrintNewLine;
     customReader->AddNode(endNode);
 

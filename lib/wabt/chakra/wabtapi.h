@@ -36,9 +36,9 @@ namespace ChakraWabt
         };
     }
 
-    struct Error
+    struct WabtAPIError
     {
-        Error(const char* message): message(message) {}
+        WabtAPIError(const char* message): message(message) {}
         const char* message;
     };
 
@@ -72,6 +72,7 @@ namespace ChakraWabt
             bool sign_extends : 1;
             bool threads : 1;
             bool simd : 1;
+            bool sat_float_to_int : 1;
         } features;
     };
 

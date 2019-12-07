@@ -6,6 +6,10 @@
 
 namespace Js
 {
+#if DBG && defined(ENABLE_SCRIPT_DEBUGGING)
+    enum DebuggerMode : unsigned int;
+#endif
+
     class FunctionExecutionStateMachine
     {
     public:
@@ -111,8 +115,22 @@ namespace Js
         // Used to detect when interpretedCount changed from a particular call
         FieldWithBarrier(uint32) lastInterpretedCount;
 
+        inline uint16 GetDefaultAutoProfilingInterpreter0Limit(bool isCoroutine) const;
+        inline uint16 GetDefaultProfilingInterpreter0Limit(bool isCoroutine) const;
+        inline uint16 GetDefaultAutoProfilingInterpreter1Limit(bool isCoroutine) const;
+        inline uint16 GetDefaultSimpleJitLimit(bool isCoroutine) const;
+        inline uint16 GetDefaultProfilingInterpreter1Limit(bool isCoroutine) const;
+
+        inline uint16 GetDefaultFullJitThreshold(bool isCoroutine) const;
+
 #if DBG
         FieldWithBarrier(bool) initializedExecutionModeAndLimits;
+        // Temporary debug flags for automation
+        FieldWithBarrier(bool) hasBeenReinitialized;
+#ifdef ENABLE_SCRIPT_DEBUGGING
+        FieldWithBarrier(Js::DebuggerMode) initDebuggerMode;
+        FieldWithBarrier(Js::DebuggerMode) reinitDebuggerMode;
+#endif
 #endif
     };
 };

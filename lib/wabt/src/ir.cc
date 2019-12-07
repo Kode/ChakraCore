@@ -41,24 +41,33 @@ const char* ExprTypeName[] = {
   "Compare",
   "Const",
   "Convert",
-  "CurrentMemory",
   "Drop",
   "GetGlobal",
   "GetLocal",
-  "GrowMemory",
   "If",
   "IfExcept",
   "Load",
   "Loop",
+  "MemoryCopy",
+  "MemoryDrop",
+  "MemoryFill",
+  "MemoryGrow",
+  "MemoryInit",
+  "MemorySize",
   "Nop",
   "Rethrow",
   "Return",
+  "ReturnCall",
+  "ReturnCallIndirect",
   "Select",
   "SetGlobal",
   "SetLocal",
   "SimdLaneOp",
   "SimdShuffleOp",
   "Store",
+  "TableInit",
+  "TableCopy",
+  "TableDrop",
   "TeeLocal",
   "Ternary",
   "Throw",
@@ -117,6 +126,14 @@ Index Module::GetExceptIndex(const Var& var) const {
   return except_bindings.FindIndex(var);
 }
 
+Index Module::GetDataSegmentIndex(const Var& var) const {
+  return data_segment_bindings.FindIndex(var);
+}
+
+Index Module::GetElemSegmentIndex(const Var& var) const {
+  return elem_segment_bindings.FindIndex(var);
+}
+
 bool Module::IsImport(ExternalKind kind, const Var& var) const {
   switch (kind) {
     case ExternalKind::Func:
@@ -140,7 +157,7 @@ bool Module::IsImport(ExternalKind kind, const Var& var) const {
 }
 
 void LocalTypes::Set(const TypeVector& types) {
-  decls.clear();
+  decls_.clear();
   if (types.empty()) {
     return;
   }
@@ -149,25 +166,25 @@ void LocalTypes::Set(const TypeVector& types) {
   Index count = 1;
   for (Index i = 1; i < types.size(); ++i) {
     if (types[i] != type) {
-      decls.emplace_back(type, count);
+      decls_.emplace_back(type, count);
       type = types[i];
       count = 1;
     } else {
       ++count;
     }
   }
-  decls.emplace_back(type, count);
+  decls_.emplace_back(type, count);
 }
 
 Index LocalTypes::size() const {
   return std::accumulate(
-      decls.begin(), decls.end(), 0,
+      decls_.begin(), decls_.end(), 0,
       [](Index sum, const Decl& decl) { return sum + decl.second; });
 }
 
 Type LocalTypes::operator[](Index i) const {
   Index count = 0;
-  for (auto decl: decls) {
+  for (auto decl: decls_) {
     if (i < count + decl.second) {
       return decl.first;
     }
@@ -196,19 +213,7 @@ Index Func::GetLocalIndex(const Var& var) const {
   if (var.is_index()) {
     return var.index();
   }
-
-  Index result = param_bindings.FindIndex(var);
-  if (result != kInvalidIndex) {
-    return result;
-  }
-
-  result = local_bindings.FindIndex(var);
-  if (result == kInvalidIndex) {
-    return result;
-  }
-
-  // The locals start after all the params.
-  return decl.GetNumParams() + result;
+  return bindings.FindIndex(var);
 }
 
 const Func* Module::GetFunc(const Var& var) const {
@@ -267,6 +272,30 @@ Exception* Module::GetExcept(const Var& var) const {
   return excepts[index];
 }
 
+const DataSegment* Module::GetDataSegment(const Var& var) const {
+  return const_cast<Module*>(this)->GetDataSegment(var);
+}
+
+DataSegment* Module::GetDataSegment(const Var& var) {
+  Index index = data_segment_bindings.FindIndex(var);
+  if (index >= data_segments.size()) {
+    return nullptr;
+  }
+  return data_segments[index];
+}
+
+const ElemSegment* Module::GetElemSegment(const Var& var) const {
+  return const_cast<Module*>(this)->GetElemSegment(var);
+}
+
+ElemSegment* Module::GetElemSegment(const Var& var) {
+  Index index = elem_segment_bindings.FindIndex(var);
+  if (index >= elem_segments.size()) {
+    return nullptr;
+  }
+  return elem_segments[index];
+}
+
 const FuncType* Module::GetFuncType(const Var& var) const {
   return const_cast<Module*>(this)->GetFuncType(var);
 }
@@ -297,12 +326,22 @@ Index Module::GetFuncTypeIndex(const FuncDeclaration& decl) const {
 }
 
 void Module::AppendField(std::unique_ptr<DataSegmentModuleField> field) {
-  data_segments.push_back(&field->data_segment);
+  DataSegment& data_segment = field->data_segment;
+  if (!data_segment.name.empty()) {
+    data_segment_bindings.emplace(data_segment.name,
+                                  Binding(field->loc, data_segments.size()));
+  }
+  data_segments.push_back(&data_segment);
   fields.push_back(std::move(field));
 }
 
 void Module::AppendField(std::unique_ptr<ElemSegmentModuleField> field) {
-  elem_segments.push_back(&field->elem_segment);
+  ElemSegment& elem_segment = field->elem_segment;
+  if (!elem_segment.name.empty()) {
+    elem_segment_bindings.emplace(elem_segment.name,
+                                  Binding(field->loc, elem_segments.size()));
+  }
+  elem_segments.push_back(&elem_segment);
   fields.push_back(std::move(field));
 }
 

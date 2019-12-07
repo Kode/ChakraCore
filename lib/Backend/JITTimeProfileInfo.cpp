@@ -84,6 +84,33 @@ JITTimeProfileInfo::InitializeJITProfileData(
     data->profiledCallSiteCount = functionBody->GetProfiledCallSiteCount();
     data->callSiteData = reinterpret_cast<CallSiteIDL*>(profileInfo->GetCallSiteInfo());
 
+    CompileAssert(sizeof(CallbackInfoIDL) == sizeof(Js::CallbackInfo));
+    Js::CallbackInfoList * callbackInfoList = functionBody->GetCallbackInfoListWithLock();
+    if (callbackInfoList == nullptr)
+    {
+        data->profiledCallbackCount = 0;
+    }
+    else
+    {
+        data->profiledCallbackCount = static_cast<Js::ProfileId>(callbackInfoList->Count());
+        if (data->profiledCallbackCount > 0)
+        {
+            data->callbackData = AnewArrayZ(alloc, CallbackInfoIDL, data->profiledCallbackCount);
+            Js::CallbackInfoList::Iterator iter = callbackInfoList->GetIterator();
+            for (Js::ProfileId callbackInfoIndex = 0; callbackInfoIndex < data->profiledCallbackCount; ++callbackInfoIndex)
+            {
+                iter.Next();
+                Js::CallbackInfo * info = iter.Data();
+                memcpy_s(
+                    &data->callbackData[callbackInfoIndex],
+                    sizeof(CallbackInfoIDL),
+                    info,
+                    sizeof(Js::CallbackInfo)
+                );
+            }
+        }
+    }
+
     CompileAssert(sizeof(BVUnitIDL) == sizeof(BVUnit));
     data->loopFlags = (BVFixedIDL*)profileInfo->GetLoopFlags();
 
@@ -147,6 +174,7 @@ JITTimeProfileInfo::InitializeJITProfileData(
     data->flags |= profileInfo->IsPowIntIntTypeSpecDisabled() ? Flags_disablePowIntIntTypeSpec : 0;
     data->flags |= profileInfo->IsTagCheckDisabled() ? Flags_disableTagCheck : 0;
     data->flags |= profileInfo->IsOptimizeTryFinallyDisabled() ? Flags_disableOptimizeTryFinally : 0;
+    data->flags |= profileInfo->IsFieldPREDisabled() ? Flags_disableFieldPRE : 0;
 }
 
 const Js::LdLenInfo *
@@ -269,6 +297,13 @@ JITTimeProfileInfo::GetLoopFlags(uint loopNum) const
 {
     Assert(GetLoopFlags() != nullptr);
     return GetLoopFlags()->GetRange<Js::LoopFlags>(loopNum * Js::LoopFlags::COUNT, Js::LoopFlags::COUNT);
+}
+
+bool 
+JITTimeProfileInfo::CanInlineCallback(Js::ArgSlot argIndex, Js::ProfileId callSiteId) const
+{
+    Js::CallbackInfo * callbackInfo = FindCallbackInfo(callSiteId);
+    return callbackInfo != nullptr && callbackInfo->CanInlineCallback(argIndex);
 }
 
 uint16
@@ -510,6 +545,12 @@ JITTimeProfileInfo::IsOptimizeTryFinallyDisabled() const
 }
 
 bool
+JITTimeProfileInfo::IsFieldPREDisabled() const
+{
+    return TestFlag(Flags_disableFieldPRE);
+}
+
+bool
 JITTimeProfileInfo::HasLdFldCallSiteInfo() const
 {
     return TestFlag(Flags_hasLdFldCallSiteInfo);
@@ -573,6 +614,26 @@ Js::CallSiteInfo *
 JITTimeProfileInfo::GetCallSiteInfo() const
 {
     return reinterpret_cast<Js::CallSiteInfo*>(m_profileData.callSiteData);
+}
+
+Js::CallbackInfo *
+JITTimeProfileInfo::GetCallbackInfo() const
+{
+    return reinterpret_cast<Js::CallbackInfo*>(m_profileData.callbackData);
+}
+
+Js::CallbackInfo * 
+JITTimeProfileInfo::FindCallbackInfo(Js::ProfileId callSiteId) const
+{
+    Js::CallbackInfo * callbackInfo = GetCallbackInfo();
+    for (size_t i = 0; i < m_profileData.profiledCallbackCount; ++i)
+    {
+        if (callbackInfo[i].callSiteId == callSiteId)
+        {
+            return &callbackInfo[i];
+        }
+    }
+    return nullptr;
 }
 
 bool

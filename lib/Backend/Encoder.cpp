@@ -4,6 +4,8 @@
 //-------------------------------------------------------------------------------------------------------
 #include "Backend.h"
 #include "Core/CRC.h"
+#include "NativeEntryPointData.h"
+#include "JitTransferData.h"
 
 ///----------------------------------------------------------------------------
 ///
@@ -74,8 +76,8 @@ Encoder::Encode()
 #endif
 
     m_pc = m_encodeBuffer;
-    m_inlineeFrameMap = Anew(m_tempAlloc, InlineeFrameMap, m_tempAlloc);
-    m_bailoutRecordMap = Anew(m_tempAlloc, BailoutRecordMap, m_tempAlloc);
+    m_inlineeFrameMap = Anew(m_tempAlloc, ArenaInlineeFrameMap, m_tempAlloc);
+    m_sortedLazyBailoutRecordList = Anew(m_tempAlloc, ArenaLazyBailoutRecordList, m_tempAlloc);
 
     IR::PragmaInstr* pragmaInstr = nullptr;
     uint32 pragmaOffsetInBuffer = 0;
@@ -252,9 +254,15 @@ Encoder::Encode()
                 isCallInstr = false;
                 this->RecordInlineeFrame(instr->m_func, GetCurrentOffset());
             }
-            if (instr->HasBailOutInfo() && Lowerer::DoLazyBailout(this->m_func))
+
+            if (instr->HasLazyBailOut())
             {
-                this->RecordBailout(instr, (uint32)(m_pc - m_encodeBuffer));
+                this->SaveToLazyBailOutRecordList(instr, this->GetCurrentOffset());
+            }
+
+            if (instr->m_opcode == Js::OpCode::LazyBailOutThunkLabel)
+            {
+                this->SaveLazyBailOutThunkOffset(this->GetCurrentOffset());
             }
         }
         else
@@ -318,6 +326,165 @@ Encoder::Encode()
         }
     }
 
+    // Assembly Dump Phase
+    // This phase exists to assist tooling that expects "assemblable" output - that is,
+    // output that, with minimal manual handling, could theoretically be fed to another
+    // assembler to make a valid function for the target platform. We don't guarantee a
+    // dump from this will _actually_ be assemblable, but it is significantly closer to
+    // that than our normal, annotated output
+#if DBG_DUMP
+    if (PHASE_DUMP(Js::AssemblyPhase, m_func))
+    {
+        FOREACH_INSTR_IN_FUNC(instr, m_func)
+        {
+            bool hasPrintedForOpnds = false;
+            Func* localScopeFuncForLambda = m_func;
+            auto printOpnd = [&hasPrintedForOpnds, localScopeFuncForLambda](IR::Opnd* opnd)
+            {
+                if (hasPrintedForOpnds)
+                {
+                    Output::Print(_u(", "));
+                }
+                switch (opnd->m_kind)
+                {
+                case IR::OpndKindInvalid:
+                    AssertMsg(false, "Should be unreachable");
+                    break;
+                case IR::OpndKindIntConst:
+                    Output::Print(_u("%lli"), (long long int)opnd->AsIntConstOpnd()->GetValue());
+                    break;
+                case IR::OpndKindInt64Const:
+                case IR::OpndKindFloatConst:
+                case IR::OpndKindFloat32Const:
+                case IR::OpndKindSimd128Const:
+                    AssertMsg(false, "Not Yet Implemented");
+                    break;
+                case IR::OpndKindHelperCall:
+                    Output::Print(_u("%s"), IR::GetMethodName(opnd->AsHelperCallOpnd()->m_fnHelper));
+                    break;
+                case IR::OpndKindSym:
+                    Output::Print(_u("SYM("));
+                    opnd->Dump(IRDumpFlags_SimpleForm, localScopeFuncForLambda);
+                    Output::Print(_u(")"));
+                    break;
+                case IR::OpndKindReg:
+                    Output::Print(_u("%S"), RegNames[opnd->AsRegOpnd()->GetReg()]);
+                    break;
+                case IR::OpndKindAddr:
+                    Output::Print(_u("0x%p"), opnd->AsAddrOpnd()->m_address);
+                    break;
+                case IR::OpndKindIndir:
+                {
+                    IR::IndirOpnd* indirOpnd = opnd->AsIndirOpnd();
+                    IR::RegOpnd* baseOpnd = indirOpnd->GetBaseOpnd();
+                    IR::RegOpnd* indexOpnd = indirOpnd->GetIndexOpnd();
+                    Output::Print(_u("["));
+                    bool hasPrintedComponent = false;
+                    if (baseOpnd != nullptr)
+                    {
+                        Output::Print(_u("%S"), RegNames[baseOpnd->GetReg()]);
+                        hasPrintedComponent = true;
+                    }
+                    if (indexOpnd != nullptr)
+                    {
+                        if (hasPrintedComponent)
+                        {
+                            Output::Print(_u(" + "));
+                        }
+                        Output::Print(_u("%S * %u"), RegNames[indexOpnd->GetReg()], indirOpnd->GetScale());
+                        hasPrintedComponent = true;
+                    }
+                    if (hasPrintedComponent)
+                    {
+                        Output::Print(_u(" + "));
+                    }
+                    Output::Print(_u("(%i)]"), indirOpnd->GetOffset());
+                    break;
+                }
+                case IR::OpndKindLabel:
+                    opnd->Dump(IRDumpFlags_SimpleForm, localScopeFuncForLambda);
+                    break;
+                case IR::OpndKindMemRef:
+                    opnd->DumpOpndKindMemRef(true, localScopeFuncForLambda);
+                    break;
+                case IR::OpndKindRegBV:
+                    AssertMsg(false, "Should be unreachable");
+                    break;
+                case IR::OpndKindList:
+                    AssertMsg(false, "Should be unreachable");
+                    break;
+                default:
+                    AssertMsg(false, "Missing operand type");
+                }
+                hasPrintedForOpnds = true;
+            };
+            switch(instr->GetKind())
+            {
+            case IR::InstrKindInvalid:
+                Assert(false);
+                break;
+            case IR::InstrKindJitProfiling:
+            case IR::InstrKindProfiled:
+            case IR::InstrKindInstr:
+            {
+                Output::SkipToColumn(4);
+                Output::Print(_u("%s "), Js::OpCodeUtil::GetOpCodeName(instr->m_opcode));
+                Output::SkipToColumn(18);
+                IR::Opnd* dst = instr->GetDst();
+                IR::Opnd* src1 = instr->GetSrc1();
+                IR::Opnd* src2 = instr->GetSrc2();
+                if (dst != nullptr && (src1 == nullptr || !dst->IsRegOpnd() || !src1->IsRegOpnd() || dst->AsRegOpnd()->GetReg() != src1->AsRegOpnd()->GetReg())) // Print dst if it's there, and not the same reg as src1 (which is usually an instr that has a srcdest
+                {
+                    printOpnd(dst);
+                }
+                if (src1 != nullptr)
+                {
+                    printOpnd(src1);
+                }
+                if (src2 != nullptr)
+                {
+                    printOpnd(src2);
+                }
+                break;
+            }
+            case IR::InstrKindBranch:
+                Output::SkipToColumn(4);
+                Output::Print(_u("%s "), Js::OpCodeUtil::GetOpCodeName(instr->m_opcode));
+                Output::SkipToColumn(18);
+                if (instr->AsBranchInstr()->IsMultiBranch())
+                {
+                    Assert(instr->GetSrc1() != nullptr);
+                    printOpnd(instr->GetSrc1());
+                }
+                else
+                {
+                    Output::Print(_u("L%u"), instr->AsBranchInstr()->GetTarget()->m_id);
+                }
+                break;
+            case IR::InstrKindProfiledLabel:
+            case IR::InstrKindLabel:
+                Output::Print(_u("L%u:"), instr->AsLabelInstr()->m_id);
+                break;
+            case IR::InstrKindEntry:
+            case IR::InstrKindExit:
+            case IR::InstrKindPragma:
+                // No output
+                break;
+            case IR::InstrKindByteCodeUses:
+                AssertMsg(false, "Instruction kind shouldn't be present here");
+                break;
+            default:
+                Assert(false);
+                break;
+            }
+            Output::SetAlignAndPrefix(60, _u("; "));
+            instr->Dump();
+            Output::ResetAlignAndPrefix();
+        } NEXT_INSTR_IN_FUNC;
+    }
+#endif
+    // End Assembly Dump Phase
+
     BEGIN_CODEGEN_PHASE(m_func, Js::EmitterPhase);
 
     // Copy to permanent buffer.
@@ -376,11 +543,6 @@ Encoder::Encode()
         m_func->GetThreadContextInfo()->ResetIsAllJITCodeInPreReservedRegion();
     }
 
-    this->m_bailoutRecordMap->MapAddress([=](int index, LazyBailOutRecord* record)
-    {
-        this->m_encoderMD.AddLabelReloc((BYTE*)&record->instructionPointer);
-    });
-
     // Relocs
     m_encoderMD.ApplyRelocs((size_t)allocation->address, codeSize, &bufferCRC, isSuccessBrShortAndLoopAlign);
 
@@ -435,7 +597,7 @@ Encoder::Encode()
     else
     {
         XDataAllocator::Register(&allocation->xdata, m_func->GetJITOutput()->GetCodeAddress(), (DWORD)m_func->GetJITOutput()->GetCodeSize());
-        m_func->GetInProcJITEntryPointInfo()->SetXDataInfo(&allocation->xdata);
+        m_func->GetInProcJITEntryPointInfo()->GetNativeEntryPointData()->SetXDataInfo(&allocation->xdata);
     }
     m_func->GetJITOutput()->SetCodeAddress(m_func->GetJITOutput()->GetCodeAddress() | 0x1); // Set thumb mode
 #endif
@@ -447,7 +609,7 @@ Encoder::Encode()
     {
         if (!m_func->IsOOPJIT()) // in-proc JIT
         {
-            m_func->GetInProcJITEntryPointInfo()->RecordInlineeFrameMap(m_inlineeFrameMap);
+            m_func->GetInProcJITEntryPointInfo()->GetInProcNativeEntryPointData()->RecordInlineeFrameMap(m_inlineeFrameMap);
         }
         else // OOP JIT
         {
@@ -470,10 +632,7 @@ Encoder::Encode()
         }
     }
 
-    if (this->m_bailoutRecordMap->Count() > 0)
-    {
-        m_func->GetInProcJITEntryPointInfo()->RecordBailOutMap(m_bailoutRecordMap);
-    }
+    this->SaveLazyBailOutJitTransferData();
 
     if (this->m_func->pinnedTypeRefs != nullptr)
     {
@@ -492,7 +651,6 @@ Encoder::Encode()
 
             pinnedTypeRefs->count = pinnedTypeRefCount;
             pinnedTypeRefs->isOOPJIT = true;
-            this->m_func->GetJITOutput()->GetOutputData()->pinnedTypeRefs = pinnedTypeRefs;
         }
         else
         {
@@ -515,10 +673,7 @@ Encoder::Encode()
             Output::Flush();
         }
 
-        if (!this->m_func->IsOOPJIT())
-        {
-            m_func->GetInProcJITEntryPointInfo()->GetJitTransferData()->SetRuntimeTypeRefs(pinnedTypeRefs);
-        }
+        this->m_func->GetJITOutput()->GetOutputData()->pinnedTypeRefs = pinnedTypeRefs;
     }
 
     // Save all equivalent type guards in a fixed size array on the JIT transfer data
@@ -570,18 +725,6 @@ Encoder::Encode()
             });
             m_func->GetInProcJITEntryPointInfo()->GetJitTransferData()->SetEquivalentTypeGuards(guards, equivalentTypeGuardsCount);
         }
-    }
-
-    if (this->m_func->lazyBailoutProperties.Count() > 0)
-    {
-        int count = this->m_func->lazyBailoutProperties.Count();
-        Js::PropertyId* lazyBailoutProperties = HeapNewArrayZ(Js::PropertyId, count);
-        Js::PropertyId* dstProperties = lazyBailoutProperties;
-        this->m_func->lazyBailoutProperties.Map([&](Js::PropertyId propertyId)
-        {
-            *dstProperties++ = propertyId;
-        });
-        m_func->GetInProcJITEntryPointInfo()->GetJitTransferData()->SetLazyBailoutProperties(lazyBailoutProperties, count);
     }
 
     // Save all property guards on the JIT transfer data in a map keyed by property ID. We will use this map when installing the entry
@@ -642,7 +785,7 @@ Encoder::Encode()
 
             Assert(reinterpret_cast<char*>(dstEntry) <= reinterpret_cast<char*>(typeGuardTransferRecord) + typeGuardTransferSize + sizeof(Js::TypeGuardTransferEntry));
 
-            m_func->GetInProcJITEntryPointInfo()->RecordTypeGuards(this->m_func->indexedPropertyGuardCount, typeGuardTransferRecord, typeGuardTransferSize);
+            m_func->GetInProcJITEntryPointInfo()->GetJitTransferData()->RecordTypeGuards(this->m_func->indexedPropertyGuardCount, typeGuardTransferRecord, typeGuardTransferSize);
         }
         else
         {
@@ -730,7 +873,7 @@ Encoder::Encode()
         }
         else
         {
-            Assert(m_func->GetInProcJITEntryPointInfo()->GetConstructorCacheCount() > 0);
+            Assert(m_func->GetInProcJITEntryPointInfo()->GetNativeEntryPointData()->GetConstructorCacheCount() > 0);
 
             size_t ctorCachesTransferSize =                                // Reserve enough room for:
                 propertyCount * sizeof(Js::CtorCacheGuardTransferEntry) +  //   each propertyId,
@@ -763,7 +906,7 @@ Encoder::Encode()
 
             Assert(reinterpret_cast<char*>(dstEntry) <= reinterpret_cast<char*>(ctorCachesTransferRecord) + ctorCachesTransferSize + sizeof(Js::CtorCacheGuardTransferEntry));
 
-            m_func->GetInProcJITEntryPointInfo()->RecordCtorCacheGuards(ctorCachesTransferRecord, ctorCachesTransferSize);
+            m_func->GetInProcJITEntryPointInfo()->GetJitTransferData()->RecordCtorCacheGuards(ctorCachesTransferRecord, ctorCachesTransferSize);
         }
     }
     m_func->GetJITOutput()->FinalizeNativeCode();
@@ -799,8 +942,6 @@ Encoder::Encode()
 
     if (PHASE_DUMP(Js::EncoderPhase, m_func) && Js::Configuration::Global.flags.Verbose && !m_func->IsOOPJIT())
     {
-        m_func->GetInProcJITEntryPointInfo()->DumpNativeOffsetMaps();
-        m_func->GetInProcJITEntryPointInfo()->DumpNativeThrowSpanSequence();
         this->DumpInlineeFrameMap(m_func->GetJITOutput()->GetCodeAddress());
         Output::Flush();
     }
@@ -870,7 +1011,7 @@ void Encoder::RecordInlineeFrame(Func* inlinee, uint32 currentOffset)
     if (!(this->m_func->IsLoopBody() && PHASE_OFF(Js::InlineInJitLoopBodyPhase, this->m_func)) && !this->m_func->IsSimpleJit())
     {
         InlineeFrameRecord* record = nullptr;
-        if (inlinee->frameInfo && inlinee->m_hasInlineArgsOpt)
+        if (inlinee->frameInfo)
         {
             record = inlinee->frameInfo->record;
             Assert(record != nullptr);
@@ -1001,34 +1142,6 @@ void Encoder::EnsureRelocEntryIntegrity(size_t newBufferStartAddress, size_t cod
     }
 }
 
-uint Encoder::CalculateCRC(uint bufferCRC, size_t data)
-{
-#if defined(_WIN32) || defined(__SSE4_2__)
-#if defined(_M_IX86)
-    if (AutoSystemInfo::Data.SSE4_2Available())
-    {
-        return _mm_crc32_u32(bufferCRC, data);
-    }
-#elif defined(_M_X64)
-    if (AutoSystemInfo::Data.SSE4_2Available())
-    {
-        //CRC32 always returns a 32-bit result
-        return (uint)_mm_crc32_u64(bufferCRC, data);
-    }
-#endif
-#endif
-    return CalculateCRC32(bufferCRC, data);
-}
-
-uint Encoder::CalculateCRC(uint bufferCRC, size_t count, _In_reads_bytes_(count) void * buffer)
-{
-    for (uint index = 0; index < count; index++)
-    {
-        bufferCRC = CalculateCRC(bufferCRC, *((BYTE*)buffer + index));
-    }
-    return bufferCRC;
-}
-
 void Encoder::ValidateCRC(uint bufferCRC, uint initialCRCSeed, _In_reads_bytes_(count) void* buffer, size_t count)
 {
     uint validationCRC = initialCRCSeed;
@@ -1091,7 +1204,8 @@ Encoder::ShortenBranchesAndLabelAlign(BYTE **codeStart, ptrdiff_t *codeSize, uin
         , &m_origOffsetBuffer );
 
     // Here we mark BRs to be shortened and adjust Labels and relocList entries offsets.
-    uint32 offsetBuffIndex = 0, pragmaInstToRecordOffsetIndex = 0, inlineeFrameRecordsIndex = 0, inlineeFrameMapIndex = 0;
+    FixUpMapIndex mapIndices;
+
     int32 totalBytesSaved = 0;
 
     // loop over all BRs, find the ones we can convert to short form
@@ -1115,7 +1229,7 @@ Encoder::ShortenBranchesAndLabelAlign(BYTE **codeStart, ptrdiff_t *codeSize, uin
             {
                 AssertMsg(reloc.isAlignedLabel(), "Expecting aligned label.");
                 // we aligned a loop, fix maps
-                m_encoderMD.FixMaps((uint32)(reloc.getLabelOrigPC() - buffStart), totalBytesSaved, &inlineeFrameRecordsIndex, &inlineeFrameMapIndex, &pragmaInstToRecordOffsetIndex, &offsetBuffIndex);
+                m_encoderMD.FixMaps((uint32)(reloc.getLabelOrigPC() - buffStart), totalBytesSaved, &mapIndices);
                 codeChange = true;
             }
             totalBytesSaved = newTotalBytesSaved;
@@ -1176,7 +1290,7 @@ Encoder::ShortenBranchesAndLabelAlign(BYTE **codeStart, ptrdiff_t *codeSize, uin
 
             // fix all maps entries from last shortened br to this one, before updating total bytes saved.
             brOffset = (uint32) ((BYTE*)reloc.m_origPtr - buffStart);
-            m_encoderMD.FixMaps(brOffset, totalBytesSaved, &inlineeFrameRecordsIndex, &inlineeFrameMapIndex, &pragmaInstToRecordOffsetIndex, &offsetBuffIndex);
+            m_encoderMD.FixMaps(brOffset, totalBytesSaved, &mapIndices);
             codeChange = true;
             totalBytesSaved += bytesSaved;
 
@@ -1192,9 +1306,10 @@ Encoder::ShortenBranchesAndLabelAlign(BYTE **codeStart, ptrdiff_t *codeSize, uin
     // Fix the rest of the maps, if needed.
     if (totalBytesSaved != 0)
     {
-        m_encoderMD.FixMaps((uint32) -1, totalBytesSaved, &inlineeFrameRecordsIndex, &inlineeFrameMapIndex, &pragmaInstToRecordOffsetIndex, &offsetBuffIndex);
+        m_encoderMD.FixMaps((uint32)-1, totalBytesSaved, &mapIndices);
         codeChange = true;
         newCodeSize -= totalBytesSaved;
+        this->FixLazyBailOutThunkOffset(totalBytesSaved);
     }
 
     // no BR shortening or Label alignment happened, no need to copy code
@@ -1413,7 +1528,7 @@ void Encoder::CopyMaps(OffsetList **m_origInlineeFrameRecords
     )
 {
     InlineeFrameRecords *recList = m_inlineeFrameRecords;
-    InlineeFrameMap *mapList = m_inlineeFrameMap;
+    ArenaInlineeFrameMap *mapList = m_inlineeFrameMap;
     PragmaInstrList *pInstrList = m_pragmaInstrToRecordOffset;
 
     OffsetList *origRecList, *origMapList, *origPInstrList;
@@ -1517,27 +1632,6 @@ void Encoder::CopyMaps(OffsetList **m_origInlineeFrameRecords
 
 #endif
 
-void Encoder::RecordBailout(IR::Instr* instr, uint32 currentOffset)
-{
-    BailOutInfo* bailoutInfo = instr->GetBailOutInfo();
-    if (bailoutInfo->bailOutRecord == nullptr)
-    {
-        return;
-    }
-#if DBG_DUMP
-    if (PHASE_DUMP(Js::LazyBailoutPhase, m_func))
-    {
-        Output::Print(_u("Offset: %u Instr: "), currentOffset);
-        instr->Dump();
-        Output::Print(_u("Bailout label: "));
-        bailoutInfo->bailOutInstr->Dump();
-    }
-#endif
-    Assert(bailoutInfo->bailOutInstr->IsLabelInstr());
-    LazyBailOutRecord record(currentOffset, (BYTE*)bailoutInfo->bailOutInstr, bailoutInfo->bailOutRecord);
-    m_bailoutRecordMap->Add(record);
-}
-
 #if DBG_DUMP
 void Encoder::DumpInlineeFrameMap(size_t baseAddress)
 {
@@ -1558,3 +1652,70 @@ void Encoder::DumpInlineeFrameMap(size_t baseAddress)
     });
 }
 #endif
+
+void
+Encoder::SaveToLazyBailOutRecordList(IR::Instr* instr, uint32 currentOffset)
+{
+    BailOutInfo* bailOutInfo = instr->GetBailOutInfo();
+
+    Assert(instr->OnlyHasLazyBailOut() && bailOutInfo->bailOutRecord != nullptr);
+
+#if DBG_DUMP
+    if (PHASE_DUMP(Js::LazyBailoutPhase, m_func))
+    {
+        Output::Print(_u("Offset: %u Instr: "), currentOffset);
+        instr->Dump();
+        Output::Print(_u("Bailout label: "));
+        bailOutInfo->bailOutInstr->Dump();
+    }
+#endif
+
+    LazyBailOutRecord record(currentOffset, bailOutInfo->bailOutRecord);
+    this->m_sortedLazyBailoutRecordList->Add(record);
+}
+
+void
+Encoder::SaveLazyBailOutThunkOffset(uint32 currentOffset)
+{
+    AssertMsg(
+        this->m_lazyBailOutThunkOffset == 0,
+        "We should only have one thunk generated during final lowerer"
+    );
+    this->m_lazyBailOutThunkOffset = this->GetCurrentOffset();
+}
+
+void
+Encoder::SaveLazyBailOutJitTransferData()
+{
+    if (this->m_func->HasLazyBailOut())
+    {
+        Assert(this->m_sortedLazyBailoutRecordList->Count() > 0);
+        Assert(this->m_lazyBailOutThunkOffset != 0);
+        Assert(this->m_func->GetLazyBailOutRecordSlot() != nullptr);
+
+        auto nativeEntryPointData = this->m_func->GetInProcJITEntryPointInfo()->GetInProcNativeEntryPointData();
+        nativeEntryPointData->SetSortedLazyBailOutRecordList(this->m_sortedLazyBailoutRecordList);
+        nativeEntryPointData->SetLazyBailOutRecordSlotOffset(this->m_func->GetLazyBailOutRecordSlot()->m_offset);
+        nativeEntryPointData->SetLazyBailOutThunkOffset(this->m_lazyBailOutThunkOffset);
+    }
+
+    if (this->m_func->lazyBailoutProperties.Count() > 0)
+    {
+        const int count = this->m_func->lazyBailoutProperties.Count();
+        Js::PropertyId* lazyBailoutProperties = HeapNewArrayZ(Js::PropertyId, count);
+        Js::PropertyId* dstProperties = lazyBailoutProperties;
+        this->m_func->lazyBailoutProperties.Map([&](Js::PropertyId propertyId)
+        {
+            *dstProperties++ = propertyId;
+        });
+        this->m_func->GetInProcJITEntryPointInfo()->GetJitTransferData()->SetLazyBailoutProperties(lazyBailoutProperties, count);
+    }
+}
+
+void
+Encoder::FixLazyBailOutThunkOffset(uint32 bytesSaved)
+{
+    // Lazy bailout thunk is inserted at the end of the function,
+    // so just decrease the offset by the number of bytes saved
+    this->m_lazyBailOutThunkOffset -= bytesSaved;
+}

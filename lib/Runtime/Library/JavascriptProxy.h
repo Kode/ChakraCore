@@ -50,10 +50,11 @@ namespace Js
 
         JavascriptProxy(DynamicType * type);
         JavascriptProxy(DynamicType * type, ScriptContext * scriptContext, RecyclableObject* target, RecyclableObject* handler);
-        static BOOL Is(_In_ Var obj);
-        static BOOL Is(_In_ RecyclableObject* obj);
-        static JavascriptProxy* FromVar(Var obj) { AssertOrFailFast(Is(obj)); return static_cast<JavascriptProxy*>(obj); }
-        static JavascriptProxy* UnsafeFromVar(Var obj) { Assert(Is(obj)); return static_cast<JavascriptProxy*>(obj); }
+
+        // before recursively calling something on 'target' use this helper in case there is nesting of proxies.
+        // the proxies could be deep nested and cause SO when processed recursively.
+        static const JavascriptProxy* UnwrapNestedProxies(const JavascriptProxy* proxy);
+
 #ifndef IsJsDiag
         RecyclableObject* GetTarget();
         RecyclableObject* GetHandler();
@@ -83,7 +84,7 @@ namespace Js
         virtual PropertyQueryFlags GetPropertyQuery(Var originalInstance, PropertyId propertyId, Var* value, PropertyValueInfo* info, ScriptContext* requestContext) override;
         virtual PropertyQueryFlags GetPropertyQuery(Var originalInstance, JavascriptString* propertyNameString, Var* value, PropertyValueInfo* info, ScriptContext* requestContext) override;
         virtual BOOL GetInternalProperty(Var instance, PropertyId internalPropertyId, Var* value, PropertyValueInfo* info, ScriptContext* requestContext) override;
-        virtual BOOL GetAccessors(PropertyId propertyId, __out Var* getter, __out Var* setter, ScriptContext * requestContext) override;
+        _Check_return_ _Success_(return) virtual BOOL GetAccessors(PropertyId propertyId, _Outptr_result_maybenull_ Var* getter, _Outptr_result_maybenull_ Var* setter, ScriptContext* requestContext) override;
         virtual PropertyQueryFlags GetPropertyReferenceQuery(Var originalInstance, PropertyId propertyId, Var* value, PropertyValueInfo* info, ScriptContext* requestContext) override;
         virtual BOOL SetProperty(PropertyId propertyId, Var value, PropertyOperationFlags flags, PropertyValueInfo* info) override;
         virtual BOOL SetProperty(JavascriptString* propertyNameString, Var value, PropertyOperationFlags flags, PropertyValueInfo* info) override;
@@ -116,7 +117,6 @@ namespace Js
         virtual BOOL IsExtensible() override;
         virtual BOOL PreventExtensions() override;
         virtual void ThrowIfCannotDefineProperty(PropertyId propId, const PropertyDescriptor& descriptor) { }
-        virtual BOOL GetDefaultPropertyDescriptor(PropertyDescriptor& descriptor) override;
         virtual BOOL Seal() override;
         virtual BOOL Freeze() override;
         virtual BOOL IsSealed() override;
@@ -139,24 +139,20 @@ namespace Js
         virtual bool CanStorePropertyValueDirectly(PropertyId propertyId, bool allowLetConst) { Assert(false); return false; };
 #endif
 
-        virtual void RemoveFromPrototype(ScriptContext * requestContext) override;
-        virtual void AddToPrototype(ScriptContext * requestContext) override;
+        virtual void RemoveFromPrototype(ScriptContext * requestContext, bool * allProtoCachesInvalidated) override;
+        virtual void AddToPrototype(ScriptContext * requestContext, bool * allProtoCachesInvalidated) override;
         virtual void SetPrototype(RecyclableObject* newPrototype) override;
 
         BOOL SetPrototypeTrap(RecyclableObject* newPrototype, bool showThrow, ScriptContext * requestContext);
         Var ToString(Js::ScriptContext* scriptContext);
-
-        // proxy does not support IDispatch stuff.
-        virtual Var GetNamespaceParent(Js::Var aChild) { AssertMsg(false, "Shouldn't call this implementation."); return nullptr; }
-        virtual HRESULT QueryObjectInterface(REFIID riid, void **ppvObj) { AssertMsg(false, "Shouldn't call this implementation."); return E_NOTIMPL; }
 
         virtual BOOL GetDiagTypeString(StringBuilder<ArenaAllocator>* stringBuilder, ScriptContext* requestContext) override;
         virtual RecyclableObject* ToObject(ScriptContext * requestContext) override;
         virtual Var GetTypeOfString(ScriptContext* requestContext) override;
 
         bool IsRevoked() const;
-        BOOL SetPropertyTrap(Var receiver, SetPropertyTrapKind setPropertyTrapKind, PropertyId propertyId, Var newValue, ScriptContext* requestContext, BOOL skipPrototypeCheck = FALSE);
-        BOOL SetPropertyTrap(Var receiver, SetPropertyTrapKind setPropertyTrapKind, Js::JavascriptString * propertyString, Var newValue, ScriptContext* requestContext);
+        BOOL SetPropertyTrap(Var receiver, SetPropertyTrapKind setPropertyTrapKind, PropertyId propertyId, Var newValue, ScriptContext* requestContext, PropertyOperationFlags propertyOperationFlags, BOOL skipPrototypeCheck = FALSE);
+        BOOL SetPropertyTrap(Var receiver, SetPropertyTrapKind setPropertyTrapKind, Js::JavascriptString * propertyString, Var newValue, ScriptContext* requestContext, PropertyOperationFlags propertyOperationFlags);
 
         void PropertyIdFromInt(uint32 index, PropertyRecord const** propertyRecord);
 
@@ -173,7 +169,7 @@ namespace Js
             for (uint32 i = 0; i < len; i++)
             {
                 if (!JavascriptOperators::GetItem(trapResultArray, i, &element, scriptContext) || // missing
-                    !(JavascriptString::Is(element) || JavascriptSymbol::Is(element)))  // neither String nor Symbol
+                    !(VarIs<JavascriptString>(element) || VarIs<JavascriptSymbol>(element)))  // neither String nor Symbol
                 {
                     JavascriptError::ThrowTypeError(scriptContext, JSERR_InconsistentTrapResult, _u("ownKeys"));
                 }
@@ -181,16 +177,14 @@ namespace Js
                 JavascriptConversion::ToPropertyKey(element, scriptContext, &propertyRecord, nullptr);
                 propertyId = propertyRecord->GetPropertyId();
 
-                if (!targetToTrapResultMap.ContainsKey(propertyId))
+                if (propertyId != Constants::NoProperty)
                 {
-                    if (propertyId != Constants::NoProperty)
+                    if (targetToTrapResultMap.AddNew(propertyId, true) == -1)
                     {
-                        targetToTrapResultMap.Add(propertyId, true);
+                        JavascriptError::ThrowTypeError(scriptContext, JSERR_DuplicateKeysFromOwnPropertyKeys);
                     }
                 }
 
-                // We explicitly allow duplicates in the results. A map is sufficient since the spec steps that remove entries
-                // remove ALL of them at the same time.
                 if (fn(propertyRecord))
                 {
                     trapResult->DirectSetItemAt(trapResultIndex++, element);
@@ -231,8 +225,7 @@ namespace Js
         template <class Fn, class GetPropertyIdFunc>
         BOOL GetPropertyTrap(Var instance, PropertyDescriptor* propertyDescriptor, Fn fn, GetPropertyIdFunc getPropertyId, ScriptContext* requestContext);
 
-        template <class Fn, class GetPropertyIdFunc>
-        BOOL GetPropertyDescriptorTrap(Var originalInstance, Fn fn, GetPropertyIdFunc getPropertyId, PropertyDescriptor* resultDescriptor, ScriptContext* requestContext);
+        BOOL GetPropertyDescriptorTrap(PropertyId propertyId, PropertyDescriptor* resultDescriptor, ScriptContext* requestContext);
 
 #if ENABLE_TTD
     public:
@@ -242,4 +235,9 @@ namespace Js
         virtual void ExtractSnapObjectDataInto(TTD::NSSnapObjects::SnapObject* objData, TTD::SlabAllocator& alloc) override;
 #endif
     };
+
+    template <> inline bool VarIsImpl<JavascriptProxy>(RecyclableObject* obj)
+    {
+        return JavascriptOperators::GetTypeId(obj) == TypeIds_Proxy;
+    }
 }

@@ -14,13 +14,13 @@
 #include "Library/JavascriptNumberObject.h"
 #include "Library/JavascriptStringObject.h"
 #include "Library/JavascriptBooleanObject.h"
+#include "Library/JavascriptBigIntObject.h"
 
 #include "Library/ObjectPrototypeObject.h"
 
 #include "Common/ByteSwap.h"
 #include "Library/DataView.h"
 
-#include "Library/JSONString.h"
 #include "Library/LazyJSONString.h"
 #include "Library/JSONStringBuilder.h"
 #include "Library/JSONStringifier.h"
@@ -37,9 +37,13 @@
 #include "Library/JavascriptRegExpConstructor.h"
 #include "Library/JavascriptRegularExpressionResult.h"
 
+#include "Library/JavascriptAsyncFromSyncIterator.h"
 #include "Library/JavascriptVariantDate.h"
 #include "Library/JavascriptPromise.h"
 #include "Library/JavascriptSymbolObject.h"
+#ifdef _CHAKRACOREBUILD
+#include "Library/CustomExternalWrapperObject.h"
+#endif
 #include "Library/JavascriptProxy.h"
 #include "Library/JavascriptReflect.h"
 #include "Library/JavascriptGenerator.h"
@@ -51,7 +55,7 @@
 #include "Library/JavascriptWeakMap.h"
 #include "Library/JavascriptWeakSet.h"
 
-#include "Types/WithScopeObject.h"
+#include "Types/UnscopablesWrapperObject.h"
 #include "Types/PropertyIndexRanges.h"
 #include "Types/DictionaryPropertyDescriptor.h"
 #include "Types/DictionaryTypeHandler.h"

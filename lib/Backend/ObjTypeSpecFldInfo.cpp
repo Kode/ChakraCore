@@ -4,8 +4,86 @@
 //-------------------------------------------------------------------------------------------------------
 
 #include "Backend.h"
+#include "NativeEntryPointData.h"
+#include "JitTransferData.h"
 
 CompileAssert(sizeof(ObjTypeSpecFldIDL) == sizeof(ObjTypeSpecFldInfo));
+
+void
+ObjTypeSpecPolymorphicInfo::SetSlotIndex(uint16 slotIndex)
+{
+    m_data.slotIndex = slotIndex;
+}
+
+uint16
+ObjTypeSpecPolymorphicInfo::GetSlotIndex() const
+{
+    return m_data.slotIndex;
+}
+
+void
+ObjTypeSpecPolymorphicInfo::SetUsesAuxSlot(bool usesAuxSlot)
+{
+    m_data.usesAuxSlot = usesAuxSlot;
+}
+
+bool
+ObjTypeSpecPolymorphicInfo::GetUsesAuxSlot() const
+{
+    return m_data.usesAuxSlot;
+}
+
+ObjTypeSpecPolymorphicInfoIDL *
+ObjTypeSpecPolymorphicInfo::GetRaw()
+{
+    return &m_data;
+}
+
+bool
+ObjTypeSpecFldInfo::NeedsDepolymorphication() const
+{
+    return m_data.polymorphicInfoArray != nullptr;
+}
+
+void
+ObjTypeSpecFldInfo::TryDepolymorphication(JITTypeHolder type, uint16 slotIndex, bool usesAuxSlot, uint16 * pNewSlotIndex, bool * pNewUsesAuxSlot, uint16 * checkedTypeSetIndex) const
+{
+    Assert(NeedsDepolymorphication());
+    AssertOrFailFast(GetEquivalentTypeSet() != nullptr);
+    AssertOrFailFast(pNewSlotIndex && pNewUsesAuxSlot);
+
+    Js::EquivalentTypeSet * typeSet = GetEquivalentTypeSet();
+    uint16 index;
+    if (!typeSet->Contains(type, &index))
+    {
+        *pNewSlotIndex = Js::Constants::NoSlot;
+        return;
+    }
+
+    AssertOrFailFast(index < m_data.polymorphicInfoCount);
+    uint16 newSlotIndex = m_data.polymorphicInfoArray[index].slotIndex;
+    bool newUsesAuxSlot = m_data.polymorphicInfoArray[index].usesAuxSlot;
+    if (slotIndex != Js::Constants::NoSlot && (newSlotIndex != slotIndex || newUsesAuxSlot != usesAuxSlot))
+    {
+        *pNewSlotIndex = Js::Constants::NoSlot;
+        return;
+    }
+
+    *pNewSlotIndex = newSlotIndex;
+    *pNewUsesAuxSlot = newUsesAuxSlot;
+    if (checkedTypeSetIndex)
+    {
+        *checkedTypeSetIndex = index;
+    }
+}
+
+void
+ObjTypeSpecFldInfo::SetUsesAuxSlot(bool usesAuxSlot)
+{
+    ObjTypeSpecFldInfoFlags flags = GetFlags();
+    flags.usesAuxSlot = usesAuxSlot;
+    m_data.flags = flags.flags;
+}
 
 bool
 ObjTypeSpecFldInfo::UsesAuxSlot() const
@@ -130,6 +208,13 @@ ObjTypeSpecFldInfo::GetSlotIndex() const
     return m_data.slotIndex;
 }
 
+void
+ObjTypeSpecFldInfo::SetSlotIndex(uint16 slotIndex)
+{
+    Assert(m_data.slotIndex == Js::Constants::NoSlot || m_data.slotIndex == slotIndex);
+    m_data.slotIndex = slotIndex;
+}
+
 uint16
 ObjTypeSpecFldInfo::GetFixedFieldCount() const
 {
@@ -183,6 +268,12 @@ ObjTypeSpecFldInfo::GetEquivalentTypeSet() const
     return (Js::EquivalentTypeSet *)PointerValue(m_data.typeSet);
 }
 
+ObjTypeSpecPolymorphicInfo *
+ObjTypeSpecFldInfo::GetObjTypeSpecPolymorphicInfoArray() const
+{
+    return (ObjTypeSpecPolymorphicInfo*)PointerValue(m_data.polymorphicInfoArray);
+}
+
 JITTypeHolder
 ObjTypeSpecFldInfo::GetType() const
 {
@@ -226,7 +317,10 @@ FixedFieldInfo *
 ObjTypeSpecFldInfo::GetFixedFieldIfAvailableAsFixedFunction()
 {
     Assert(HasFixedValue());
-    Assert(IsMono() || (IsPoly() && !DoesntHaveEquivalence()));
+    if (!IsMono() && !(IsPoly() && !DoesntHaveEquivalence()))
+    {
+        return nullptr;
+    }
     AssertOrFailFast(m_data.fixedFieldInfoArraySize > 0);
     Assert(GetFixedFieldInfoArray());
     if (GetFixedFieldInfoArray()[0].GetFuncInfoAddr() != 0)
@@ -336,7 +430,7 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::InlineCache* cac
             // These shared property guards are registered on the main thread and checked during entry point installation
             // (see NativeCodeGenerator::CheckCodeGenDone) to ensure that no property became read-only while we were
             // JIT-ing on the background thread.
-            propertyGuard = entryPoint->RegisterSharedPropertyGuard(propertyId, scriptContext);
+            propertyGuard = entryPoint->GetNativeEntryPointData()->RegisterSharedPropertyGuard(propertyId, scriptContext);
         }
     }
     else if (isProto)
@@ -353,7 +447,7 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::InlineCache* cac
             fieldValue = prototypeObject->GetInlineSlot(slotIndex);
         }
         isMissing = localCache.u.proto.isMissing;
-        propertyGuard = entryPoint->RegisterSharedPropertyGuard(propertyId, scriptContext);
+        propertyGuard = entryPoint->GetNativeEntryPointData()->RegisterSharedPropertyGuard(propertyId, scriptContext);
     }
     else
     {
@@ -411,10 +505,10 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::InlineCache* cac
 
             if (fixedProperty != nullptr && propertyGuard == nullptr)
             {
-                propertyGuard = entryPoint->RegisterSharedPropertyGuard(propertyId, scriptContext);
+                propertyGuard = entryPoint->GetNativeEntryPointData()->RegisterSharedPropertyGuard(propertyId, scriptContext);
             }
 
-            if (fixedProperty != nullptr && Js::JavascriptFunction::Is(fixedProperty))
+            if (fixedProperty != nullptr && Js::VarIs<Js::JavascriptFunction>(fixedProperty))
             {
                 functionObject = (Js::JavascriptFunction *)fixedProperty;
                 if (PHASE_VERBOSE_TRACE(Js::FixedMethodsPhase, functionBody))
@@ -487,7 +581,7 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::InlineCache* cac
                     }
 
                     // We must keep the runtime cache alive as long as this entry point exists and may try to dereference it.
-                    entryPoint->RegisterConstructorCache(runtimeConstructorCache, recycler);
+                    entryPoint->GetNativeEntryPointData()->RegisterConstructorCache(runtimeConstructorCache, recycler);
                     ctorCache = RecyclerNew(recycler, JITTimeConstructorCache, functionObject, runtimeConstructorCache);
 
                     if (PHASE_TRACE(Js::FixedNewObjPhase, functionBody))
@@ -591,7 +685,7 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::InlineCache* cac
 
         info = RecyclerNew(recycler, ObjTypeSpecFldInfo,
             id, type->GetTypeId(), jitTypeWithoutProperty, typeSet, usesAuxSlot, isProto, isAccessor, isFieldValueFixed, keepFieldValue, false/*doesntHaveEquivalence*/, false, slotIndex, propertyId,
-            prototypeObject, propertyGuard, ctorCache, fixedFieldInfoArray, 1);
+            prototypeObject, propertyGuard, ctorCache, fixedFieldInfoArray, 1, 0, nullptr);
 
         if (PHASE_TRACE(Js::ObjTypeSpecPhase, topFunctionBody) || PHASE_TRACE(Js::EquivObjTypeSpecPhase, topFunctionBody))
         {
@@ -651,6 +745,7 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::PolymorphicInlin
     uint16 firstNonEmptyCacheIndex = UINT16_MAX;
     uint16 slotIndex = 0;
     bool areEquivalent = true;
+    bool canDepolymorphize = topFunctionBody != functionBody && !PHASE_OFF(Js::DepolymorphizeInlineesPhase, topFunctionBody);
     bool usesAuxSlot = false;
     bool isProto = false;
     bool isAccessor = false;
@@ -661,7 +756,7 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::PolymorphicInlin
     bool areStressEquivalent = stress;
 
     uint16 typeCount = 0;
-    for (uint16 i = 0; (areEquivalent || stress || gatherDataForInlining) && i < polyCacheSize; i++)
+    for (uint16 i = 0; (areEquivalent || stress || gatherDataForInlining || canDepolymorphize) && i < polyCacheSize; i++)
     {
         Js::InlineCache& inlineCache = inlineCaches[i];
         if (inlineCache.IsEmpty()) continue;
@@ -674,7 +769,11 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::PolymorphicInlin
                 usesAuxSlot = TypeHasAuxSlotTag(inlineCache.u.local.type);
                 slotIndex = inlineCache.u.local.slotIndex;
                 // We don't support equivalent object type spec for adding properties.
-                areEquivalent = inlineCache.u.local.typeWithoutProperty == nullptr;
+                if (inlineCache.u.local.typeWithoutProperty != nullptr)
+                {
+                    areEquivalent = false;
+                    canDepolymorphize = false;
+                }
                 gatherDataForInlining = false;
             }
             // Missing properties cannot be treated as equivalent, because for objects with SDTH or DTH, we don't change the object's type
@@ -695,6 +794,7 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::PolymorphicInlin
                 {
                     areEquivalent = false;
                     areStressEquivalent = false;
+                    canDepolymorphize = false;
                     gatherDataForInlining = false;
                 }
             }
@@ -729,19 +829,27 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::PolymorphicInlin
         {
             if (inlineCache.IsLocal())
             {
-                if (isProto || isAccessor || inlineCache.u.local.typeWithoutProperty != nullptr || slotIndex != inlineCache.u.local.slotIndex ||
-                    typeId != TypeWithoutAuxSlotTag(inlineCache.u.local.type)->GetTypeId() || usesAuxSlot != TypeHasAuxSlotTag(inlineCache.u.local.type))
+                if (slotIndex != inlineCache.u.local.slotIndex || usesAuxSlot != TypeHasAuxSlotTag(inlineCache.u.local.type))
                 {
                     areEquivalent = false;
+                }
+                if (isProto || isAccessor || inlineCache.u.local.typeWithoutProperty != nullptr || typeId != TypeWithoutAuxSlotTag(inlineCache.u.local.type)->GetTypeId())
+                {
+                    areEquivalent = false;
+                    canDepolymorphize = false;
                 }
                 gatherDataForInlining = false;
             }
             else if (inlineCache.IsProto())
             {
-                if (!isProto || isAccessor || prototypeObject != inlineCache.u.proto.prototypeObject || slotIndex != inlineCache.u.proto.slotIndex ||
-                    typeId != TypeWithoutAuxSlotTag(inlineCache.u.proto.type)->GetTypeId() || usesAuxSlot != TypeHasAuxSlotTag(inlineCache.u.proto.type))
+                if (slotIndex != inlineCache.u.proto.slotIndex || usesAuxSlot != TypeHasAuxSlotTag(inlineCache.u.proto.type))
                 {
                     areEquivalent = false;
+                }
+                if (!isProto || isAccessor || prototypeObject != inlineCache.u.proto.prototypeObject || typeId != TypeWithoutAuxSlotTag(inlineCache.u.proto.type)->GetTypeId())
+                {
+                    areEquivalent = false;
+                    canDepolymorphize = false;
                 }
             }
             else
@@ -751,10 +859,15 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::PolymorphicInlin
                 // 2. the types are equivalent.
                 //
                 // This is done to keep the equivalence check helper as-is
-                if (!isAccessor || isGetterAccessor != inlineCache.IsGetterAccessor() || !isAccessorOnProto || !inlineCache.u.accessor.isOnProto || accessorOwnerObject != inlineCache.u.accessor.object ||
-                    slotIndex != inlineCache.u.accessor.slotIndex || typeId != TypeWithoutAuxSlotTag(inlineCache.u.accessor.type)->GetTypeId() || usesAuxSlot != TypeHasAuxSlotTag(inlineCache.u.accessor.type))
+                if (slotIndex != inlineCache.u.accessor.slotIndex || usesAuxSlot != TypeHasAuxSlotTag(inlineCache.u.accessor.type))
                 {
                     areEquivalent = false;
+                }
+                if (!isAccessor || isGetterAccessor != inlineCache.IsGetterAccessor() || !isAccessorOnProto || !inlineCache.u.accessor.isOnProto ||
+                    accessorOwnerObject != inlineCache.u.accessor.object || typeId != TypeWithoutAuxSlotTag(inlineCache.u.accessor.type)->GetTypeId())
+                {
+                    areEquivalent = false;
+                    canDepolymorphize = false;
                 }
                 gatherDataForInlining = false;
             }
@@ -779,11 +892,14 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::PolymorphicInlin
     gatherDataForInlining = false;
 #endif
 
+    bool depolymorphize = false;
     if (!areEquivalent && !areStressEquivalent)
     {
         IncInlineCacheCount(nonEquivPolyInlineCacheCount);
         cache->SetIgnoreForEquivalentObjTypeSpec(true);
-        if (!gatherDataForInlining)
+        // Only do depolymorphication bookkeeping if we're in an inlinee and types are not equivalent
+        depolymorphize = canDepolymorphize;
+        if (!gatherDataForInlining && !depolymorphize)
         {
             return nullptr;
         }
@@ -831,6 +947,7 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::PolymorphicInlin
 #endif
     // Let's get the types.
     Js::Type* localTypes[MaxPolymorphicInlineCacheSize];
+    ObjTypeSpecPolymorphicInfo localPolymorphicInfo[MaxPolymorphicInlineCacheSize];
 
     uint16 typeNumber = 0;
     for (uint16 i = firstNonEmptyCacheIndex; i < polyCacheSize; i++)
@@ -838,9 +955,33 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::PolymorphicInlin
         Js::InlineCache& inlineCache = inlineCaches[i];
         if (inlineCache.IsEmpty()) continue;
 
-        localTypes[typeNumber] = inlineCache.IsLocal() ? TypeWithoutAuxSlotTag(inlineCache.u.local.type) :
-            inlineCache.IsProto() ? TypeWithoutAuxSlotTag(inlineCache.u.proto.type) :
-            TypeWithoutAuxSlotTag(inlineCache.u.accessor.type);
+        if (inlineCache.IsLocal())
+        {
+            localTypes[typeNumber] = TypeWithoutAuxSlotTag(inlineCache.u.local.type);
+            if (depolymorphize)
+            {
+                localPolymorphicInfo[typeNumber].SetSlotIndex(inlineCache.u.local.slotIndex);
+                localPolymorphicInfo[typeNumber].SetUsesAuxSlot(TypeHasAuxSlotTag(inlineCache.u.local.type));
+            }
+        }
+        else if (inlineCache.IsProto())
+        {
+            localTypes[typeNumber] = TypeWithoutAuxSlotTag(inlineCache.u.proto.type);
+            if (depolymorphize)
+            {
+                localPolymorphicInfo[typeNumber].SetSlotIndex(inlineCache.u.proto.slotIndex);
+                localPolymorphicInfo[typeNumber].SetUsesAuxSlot(TypeHasAuxSlotTag(inlineCache.u.proto.type));
+            }
+        }
+        else
+        {
+            localTypes[typeNumber] = TypeWithoutAuxSlotTag(inlineCache.u.accessor.type);
+            if (depolymorphize)
+            {
+                localPolymorphicInfo[typeNumber].SetSlotIndex(inlineCache.u.accessor.slotIndex);
+                localPolymorphicInfo[typeNumber].SetUsesAuxSlot(TypeHasAuxSlotTag(inlineCache.u.accessor.type));
+            }
+        }
 
 #if ENABLE_FIXED_FIELDS
         if (gatherDataForInlining)
@@ -902,7 +1043,7 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::PolymorphicInlin
     }
 
     Js::PropertyId propertyId = functionBody->GetPropertyIdFromCacheId(cacheId);
-    Js::PropertyGuard* propertyGuard = entryPoint->RegisterSharedPropertyGuard(propertyId, scriptContext);
+    Js::PropertyGuard* propertyGuard = entryPoint->GetNativeEntryPointData()->RegisterSharedPropertyGuard(propertyId, scriptContext);
 
     // For polymorphic, non-equivalent objTypeSpecFldInfo's, hasFixedValue is true only if each of the inline caches has a fixed function for the given cacheId, or
     // in the case of an accessor cache, only if the there is only one version of the accessor.
@@ -912,11 +1053,27 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::PolymorphicInlin
     bool doesntHaveEquivalence = !(areEquivalent || areStressEquivalent);
 
     Js::EquivalentTypeSet* typeSet = nullptr;
+    ObjTypeSpecPolymorphicInfo * polymorphicInfoArray = nullptr;
+    uint16 polymorphicInfoCount = 0;
     auto jitTransferData = entryPoint->GetJitTransferData();
     Assert(jitTransferData != nullptr);
-    if (areEquivalent || areStressEquivalent)
+    if (areEquivalent || areStressEquivalent || depolymorphize)
     {
+        if (depolymorphize)
+        {
+            // Because we require the ordering of the polymorphic info to match the equivalent type set, and because there are places in the code
+            // where the equivalent type set gets sorted without touching the polymorphic info, and may be more of them in future, just sort
+            // them both now before anyone can use them.
+            SortTypesAndPolymorphicInfo(localTypes, localPolymorphicInfo, &typeCount);
+
+            // We don't have a single known slot index. We have one per type in the set. GlobOpt will sort out which one to use.
+            slotIndex = Js::Constants::NoSlot;
+            polymorphicInfoCount = typeCount;
+            polymorphicInfoArray = RecyclerNewArrayLeaf(recycler, ObjTypeSpecPolymorphicInfo, typeCount);
+        }
+
         RecyclerJITTypeHolder* types = RecyclerNewArray(recycler, RecyclerJITTypeHolder, typeCount);
+
         for (uint16 i = 0; i < typeCount; i++)
         {
             jitTransferData->AddJitTimeTypeRef(localTypes[i], recycler);
@@ -938,13 +1095,23 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::PolymorphicInlin
             types[i].t = RecyclerNew(recycler, JITType);
             __analysis_assume(localTypes[i] != nullptr);
             JITType::BuildFromJsType(localTypes[i], types[i].t);
+
+            if (depolymorphize)
+            {
+                polymorphicInfoArray[i] = localPolymorphicInfo[i];
+            }
         }
         typeSet = RecyclerNew(recycler, Js::EquivalentTypeSet, types, typeCount);
+        if (depolymorphize)
+        {
+            // We sorted the set above.
+            typeSet->SetSortedAndDuplicatesRemoved(true);
+        }
     }
 
     ObjTypeSpecFldInfo* info = RecyclerNew(recycler, ObjTypeSpecFldInfo,
         id, typeId, nullptr, typeSet, usesAuxSlot, isProto, isAccessor, hasFixedValue, hasFixedValue, doesntHaveEquivalence, true, slotIndex, propertyId,
-        prototypeObject, propertyGuard, nullptr, fixedFieldInfoArray, fixedFunctionCount/*, nullptr, nullptr, nullptr*/);
+        prototypeObject, propertyGuard, nullptr, fixedFieldInfoArray, fixedFunctionCount, polymorphicInfoCount, polymorphicInfoArray);
 
     if (PHASE_TRACE(Js::ObjTypeSpecPhase, topFunctionBody) || PHASE_TRACE(Js::EquivObjTypeSpecPhase, topFunctionBody))
     {
@@ -968,6 +1135,46 @@ ObjTypeSpecFldInfo* ObjTypeSpecFldInfo::CreateFrom(uint id, Js::PolymorphicInlin
     return info;
 
 #undef IncInlineCacheCount
+}
+
+void
+ObjTypeSpecFldInfo::SortTypesAndPolymorphicInfo(Js::Type ** types, ObjTypeSpecPolymorphicInfo * info, uint16 * pTypeCount)
+{
+    uint16 oldCount = *pTypeCount;
+
+    for (uint16 i = 1; i < oldCount; i++)
+    {
+        uint16 j = i;
+        while (j > 0 && (types[j - 1] > types[j]))
+        {
+            Js::Type * tmpType = types[j];
+            ObjTypeSpecPolymorphicInfo tmpInfo = info[j];
+
+            types[j] = types[j - 1];
+            info[j] = info[j - 1];
+
+            types[j - 1] = tmpType;
+            info[j - 1] = tmpInfo;
+
+            j--;
+        }
+    }
+
+    uint16 i = 0;
+    for (uint16 j = 1; j < oldCount; j++)
+    {
+        if (types[i] != types[j])
+        {
+            types[++i] = types[j];
+            info[i] = info[j];
+        }
+    }
+
+    *pTypeCount = ++i;
+    for (; i < oldCount; i++)
+    {
+        types[i] = nullptr;
+    }
 }
 
 ObjTypeSpecFldInfoFlags

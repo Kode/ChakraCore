@@ -41,6 +41,7 @@ private:
     BYTE canMergeWithBodyScope : 1;
     BYTE hasLocalInClosure : 1;
     BYTE isBlockInLoop : 1;
+    BYTE hasNestedParamFunc : 1;
 public:
 #if DBG
     BYTE isRestored : 1;
@@ -60,6 +61,7 @@ public:
         canMergeWithBodyScope(true),
         hasLocalInClosure(false),
         isBlockInLoop(false),
+        hasNestedParamFunc(false),
         location(Js::Constants::NoRegister),
         m_symList(nullptr),
         m_count(0),
@@ -110,6 +112,18 @@ public:
         }
     }
 
+    static bool HasSymbolName(Scope * scope, const JsUtil::CharacterBuffer<WCHAR>& name)
+    {
+        for (Symbol *sym = scope->m_symList; sym; sym = sym->GetNext())
+        {
+            if (sym->GetName() == name)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     void AddSymbol(Symbol *sym)
     {
         if (enclosingScope == nullptr)
@@ -117,12 +131,9 @@ public:
             sym->SetIsGlobal(true);
         }
         sym->SetScope(this);
-        for (Symbol *symInList = m_symList; symInList; symInList = symInList->GetNext())
+        if (HasSymbolName(this, sym->GetName()))
         {
-            if (symInList->GetName() == sym->GetName())
-            {
-                return;
-            }
+            return;
         }
         sym->SetNext(m_symList);
         m_symList = sym;
@@ -136,6 +147,7 @@ public:
             sym->SetIsGlobal(true);
         }
         sym->SetScope(this);
+        Assert(!HasSymbolName(this, sym->GetName()));
         sym->SetNext(m_symList);
         m_symList = sym;
         m_count++;
@@ -241,6 +253,9 @@ public:
 
     void SetIsBlockInLoop(bool is = true) { isBlockInLoop = is; }
     bool IsBlockInLoop() const { return isBlockInLoop; }
+
+    void SetHasNestedParamFunc(bool is = true) { hasNestedParamFunc = is; }
+    bool GetHasNestedParamFunc() const { return hasNestedParamFunc; }
 
     bool HasInnerScopeIndex() const { return innerScopeIndex != (uint)-1; }
     uint GetInnerScopeIndex() const { return innerScopeIndex; }

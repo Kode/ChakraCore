@@ -37,6 +37,7 @@
 
 #if DEFINE_PARSEABLE_FUNCTION_INFO_FIELDS
 PROTECTED_FIELDS
+    DECLARE_SERIALIZABLE_FIELD(FunctionBodyFlags, flags, FunctionBodyFlags);
     DECLARE_SERIALIZABLE_FIELD(uint32, m_grfscr, ULong);                     // For values, see fscr* values in scrutil.h.
     DECLARE_SERIALIZABLE_FIELD(ArgSlot, m_inParamCount, ArgSlot);           // Count of 'in' parameters to method
     DECLARE_SERIALIZABLE_FIELD(ArgSlot, m_reportedInParamCount, ArgSlot);   // Count of 'in' parameters to method excluding default and rest
@@ -44,7 +45,6 @@ PROTECTED_FIELDS
     DECLARE_SERIALIZABLE_FIELD(charcount_t, m_cchLength, CharCount);        // length of the function in code points (not bytes)
     DECLARE_SERIALIZABLE_FIELD(uint, m_cbLength, UInt32);                   // length of the function in bytes
     DECLARE_SERIALIZABLE_FIELD(uint, m_displayShortNameOffset, UInt32);     // Offset into the display name where the short name is found
-    DECLARE_SERIALIZABLE_FIELD(FunctionBodyFlags, flags, FunctionBodyFlags);
 
 PUBLIC_FIELDS
     DECLARE_SERIALIZABLE_FIELD(UINT, scopeSlotArraySize, UInt32);
@@ -93,6 +93,7 @@ PRIVATE_FIELDS
     DECLARE_SERIALIZABLE_ACCESSOR_FIELD(uint, ObjLiteralCount, UInt32, 0);
     DECLARE_SERIALIZABLE_ACCESSOR_FIELD(uint, LiteralRegexCount, UInt32, 0);
     DECLARE_SERIALIZABLE_ACCESSOR_FIELD(uint, InnerScopeCount, UInt32, 0);
+    DECLARE_SERIALIZABLE_ACCESSOR_FIELD(ProfileId, ProfiledCallApplyCallSiteCount, UInt16, 0);
     DECLARE_SERIALIZABLE_ACCESSOR_FIELD(ProfileId, ProfiledForInLoopCount, UInt16, 0);
     DECLARE_SERIALIZABLE_ACCESSOR_FIELD(RegSlot, LocalClosureRegister, RegSlot, Constants::NoRegister);
     DECLARE_SERIALIZABLE_ACCESSOR_FIELD(RegSlot, ParamClosureRegister, RegSlot, Constants::NoRegister);

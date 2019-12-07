@@ -252,7 +252,7 @@ void ConfigParser::ParseRegistryKey(HKEY hk, CmdLineArgsParser &parser)
     dwSize = sizeof(dwValue);
     if (NOERROR == RegGetValueW(hk, nullptr, _u("EnumerationCompat"), RRF_RT_DWORD, nullptr, (LPBYTE)&dwValue, &dwSize))
     {
-        if(dwValue == 1)
+        if (dwValue == 1)
         {
             Js::Configuration::Global.flags.EnumerationCompat = true;
         }
@@ -267,7 +267,7 @@ void ConfigParser::ParseRegistryKey(HKEY hk, CmdLineArgsParser &parser)
     dwSize = sizeof(dwValue);
     if (NOERROR == RegGetValueW(hk, nullptr, _u("FailFastIfDisconnectedDelegate"), RRF_RT_DWORD, nullptr, (LPBYTE)&dwValue, &dwSize))
     {
-        if(dwValue == 1)
+        if (dwValue == 1)
         {
             Js::Configuration::Global.flags.FailFastIfDisconnectedDelegate = true;
         }
@@ -304,6 +304,29 @@ void ConfigParser::ParseRegistryKey(HKEY hk, CmdLineArgsParser &parser)
         }
     }
 
+    // BgParse feature control
+    //     0 - Disable BgParse
+    //     1 - Enable BgParse
+    dwValue = 0;
+    dwSize = sizeof(dwValue);
+    if (NOERROR == RegGetValueW(hk, nullptr, _u("EnableBgParse"), RRF_RT_DWORD, nullptr, (LPBYTE)&dwValue, &dwSize))
+    {
+        Js::ConfigFlagsTable &configFlags = Js::Configuration::Global.flags;
+        configFlags.Enable(Js::BgParseFlag);
+        if (dwValue == 0)
+        {
+            configFlags.SetAsBoolean(Js::BgParseFlag, false);
+        }
+        else if (dwValue == 1)
+        {
+            configFlags.SetAsBoolean(Js::BgParseFlag, true);
+        }
+
+#if ENABLE_DEBUG_CONFIG_OPTIONS
+        Output::Print(_u("BgParse controlled by registry: %u\n"), dwValue);
+#endif
+    }
+
     // Spectre mitigation feature control
     // This setting allows enabling\disabling spectre mitigations
     //     0 - Disable Spectre mitigations
@@ -324,8 +347,66 @@ void ConfigParser::ParseRegistryKey(HKEY hk, CmdLineArgsParser &parser)
         }
     }
 
+#ifdef ENABLE_BASIC_TELEMETRY
+    SetConfigStringFromRegistry(hk, _u("Telemetry"), _u("Discriminator1"), Js::Configuration::Global.flags.TelemetryDiscriminator1);
+    SetConfigStringFromRegistry(hk, _u("Telemetry"), _u("Discriminator2"), Js::Configuration::Global.flags.TelemetryDiscriminator2);
+    SetConfigStringFromRegistry(hk, _u("Telemetry"), _u("RunType"), Js::Configuration::Global.flags.TelemetryRunType);
+#endif
+
 #endif // _WIN32
 }
+
+#ifdef _WIN32
+
+void ConfigParser::SetConfigStringFromRegistry(_In_ HKEY hk, _In_z_ const char16* subKeyName, _In_z_ const char16* valName, _Inout_ Js::String& str)
+{
+    const char16* regValue = nullptr;
+    DWORD len = 0;
+    ReadRegistryString(hk, subKeyName, valName, &regValue, &len);
+    if (regValue != nullptr)
+    {
+        str = regValue;
+        // Js::String  makes a copy of buffer so delete here
+        NoCheckHeapDeleteArray(len, regValue);
+    }
+}
+
+/**
+ * Read a string from the registry.  Will return nullptr if string registry entry 
+ * doesn't exist, or if we can't allocate memory.  
+ * Will allocate a char16* buffer on the heap. Caller is responsible for freeing.
+ */
+void ConfigParser::ReadRegistryString(_In_ HKEY hk, _In_z_ const char16* subKeyName, _In_z_ const char16* valName, _Outptr_result_maybenull_z_ const char16** sz, _Out_ DWORD* length)
+{
+    DWORD bufLength = 0;
+    *length = 0;
+    *sz = nullptr;
+
+    // first read to get size of string
+    DWORD result = RegGetValueW(hk, subKeyName, valName, RRF_RT_REG_SZ, nullptr, nullptr, &bufLength);
+    if (NOERROR == result)
+    {
+        if (bufLength > 0)
+        {
+            byte* buf = NoCheckHeapNewArrayZ(byte, bufLength);
+            if (buf != nullptr)
+            {
+                result = RegGetValueW(hk, subKeyName, valName, RRF_RT_REG_SZ, nullptr, buf, &bufLength);
+                if (NOERROR == result)
+                {
+                    // if successful, bufLength won't include null terminator so add 1
+                    *length = (bufLength / sizeof(char16)) + 1;
+                    *sz = reinterpret_cast<char16*>(buf);
+                }
+                else
+                {
+                    NoCheckHeapDeleteArray(bufLength, buf);
+                }
+            }
+        }
+    }
+}
+#endif // _WIN32
 
 void ConfigParser::ParseConfig(HANDLE hmod, CmdLineArgsParser &parser, const char16* strCustomConfigFile)
 {
@@ -424,6 +505,11 @@ void ConfigParser::ParseConfig(HANDLE hmod, CmdLineArgsParser &parser, const cha
     {
         CharType curChar = ReadChar(configFile);
 
+        if (this->_flags.rawInputFromConfigFileIndex < sizeof(this->_flags.rawInputFromConfigFile) / sizeof(this->_flags.rawInputFromConfigFile[0]))
+        {
+            this->_flags.rawInputFromConfigFile[this->_flags.rawInputFromConfigFileIndex++] = curChar;
+        }
+
         if (curChar == EndChar || isspace(curChar) || curChar == 0)
         {
             configBuffer[index] = 0;
@@ -493,32 +579,33 @@ void ConfigParser::ProcessConfiguration(HANDLE hmod)
         FILE *fp;
 
         // fail usually means there is an existing console. We don't really care.
-        AllocConsole();
-
-        fd = _open_osfhandle((intptr_t)GetStdHandle(STD_OUTPUT_HANDLE), O_TEXT);
-        fp = _wfdopen(fd, _u("w"));
-
-        if (fp != nullptr)
+        if (AllocConsole())
         {
-            *stdout = *fp;
-            setvbuf(stdout, nullptr, _IONBF, 0);
-
-            fd = _open_osfhandle((intptr_t)GetStdHandle(STD_ERROR_HANDLE), O_TEXT);
+            fd = _open_osfhandle((intptr_t)GetStdHandle(STD_OUTPUT_HANDLE), O_TEXT);
             fp = _wfdopen(fd, _u("w"));
 
             if (fp != nullptr)
             {
-                *stderr = *fp;
-                setvbuf(stderr, nullptr, _IONBF, 0);
+                *stdout = *fp;                
+                setvbuf(stdout, nullptr, _IONBF, 0);
 
-                char16 buffer[_MAX_PATH + 70];
+                fd = _open_osfhandle((intptr_t)GetStdHandle(STD_ERROR_HANDLE), O_TEXT);
+                fp = _wfdopen(fd, _u("w"));
 
-                if (ConfigParserAPI::FillConsoleTitle(buffer, _MAX_PATH + 20, modulename))
+                if (fp != nullptr)
                 {
-                    SetConsoleTitle(buffer);
-                }
+                    *stderr = *fp;
+                    setvbuf(stderr, nullptr, _IONBF, 0);
 
-                hasOutput = true;
+                    char16 buffer[_MAX_PATH + 70];
+
+                    if (ConfigParserAPI::FillConsoleTitle(buffer, _MAX_PATH + 20, modulename))
+                    {
+                        SetConsoleTitle(buffer);
+                    }
+
+                    hasOutput = true;
+                }
             }
         }
     }

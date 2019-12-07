@@ -23,18 +23,18 @@ namespace PlatformAgnostic
         static const UNormalizer2 *StaticUNormalizerFactory(NormalizationForm nf)
         {
             static_assert(
-                NormalizationForm::C == UNORM2_COMPOSE &&
-                NormalizationForm::D == UNORM2_DECOMPOSE &&
+                static_cast<int>(NormalizationForm::C) == static_cast<int>(UNORM2_COMPOSE) &&
+                static_cast<int>(NormalizationForm::D) == static_cast<int>(UNORM2_DECOMPOSE) &&
                 // Deciding between ICU_NORMALIZATION_NFC and ICU_NORMALIZATION_NFKC
                 // Depends on ::KC and ::KD being INT_MIN + their non-K forms
                 // We can't just make them negative of their non-K forms because UNORM2_COMPOSE == 0
-                NormalizationForm::KC == INT_MIN + UNORM2_COMPOSE &&
-                NormalizationForm::KD == INT_MIN + UNORM2_DECOMPOSE &&
+                static_cast<int>(NormalizationForm::KC) == INT_MIN + static_cast<int>(UNORM2_COMPOSE) &&
+                static_cast<int>(NormalizationForm::KD) == INT_MIN + static_cast<int>(UNORM2_DECOMPOSE) &&
                 (
-                    NormalizationForm::Other != NormalizationForm::C &&
-                    NormalizationForm::Other != NormalizationForm::D &&
-                    NormalizationForm::Other != NormalizationForm::KC &&
-                    NormalizationForm::Other != NormalizationForm::KD
+                    static_cast<int>(NormalizationForm::Other) != static_cast<int>(NormalizationForm::C) &&
+                    static_cast<int>(NormalizationForm::Other) != static_cast<int>(NormalizationForm::D) &&
+                    static_cast<int>(NormalizationForm::Other) != static_cast<int>(NormalizationForm::KC) &&
+                    static_cast<int>(NormalizationForm::Other) != static_cast<int>(NormalizationForm::KD)
                 ),
                 "Invalid NormalizationForm enum configuration"
             );
@@ -120,6 +120,9 @@ namespace PlatformAgnostic
             case U_TRUNCATED_CHAR_FOUND:
             case U_ILLEGAL_CHAR_FOUND:
                 return ApiError::InvalidUnicodeText;
+            case U_INDEX_OUTOFBOUNDS_ERROR: // this is int32 overflow for u_strToCase
+            case U_MEMORY_ALLOCATION_ERROR:
+                return ApiError::OutOfMemory;
             default:
                 return ApiError::UntranslatedError;
             }
@@ -188,11 +191,7 @@ namespace PlatformAgnostic
 
             UErrorCode status = U_ZERO_ERROR;
             int required = unorm2_normalize(normalizer, reinterpret_cast<const UChar *>(sourceString), sourceLength, reinterpret_cast<UChar *>(destString), destLength, &status);
-
-            if (U_FAILURE(status))
-            {
-                *pErrorOut = ApiError::InsufficientBuffer;
-            }
+            *pErrorOut = TranslateUErrorCode(status);
 
             return required;
         }
@@ -225,7 +224,7 @@ namespace PlatformAgnostic
 
         bool IsWhitespace(codepoint_t ch)
         {
-            return u_isUWhiteSpace(ch) == 1;
+            return u_hasBinaryProperty(ch, UCHAR_WHITE_SPACE);
         }
 
         template<bool toUpper, bool useInvariant>
@@ -252,8 +251,6 @@ namespace PlatformAgnostic
                     (UChar*) sourceString, sourceLength, locale, &errorCode);
             }
 
-            AssertMsg(resultStringLength > 0, "u_strToCase must return required destString length");
-
             *pErrorOut = TranslateUErrorCode(errorCode);
 
             return static_cast<charcount_t>(resultStringLength);
@@ -261,18 +258,20 @@ namespace PlatformAgnostic
 
         bool IsIdStart(codepoint_t ch)
         {
-            return u_isIDStart(ch);
+            return u_hasBinaryProperty(ch, UCHAR_ID_START);
         }
 
         bool IsIdContinue(codepoint_t ch)
         {
-            return u_isIDPart(ch);
+            return u_hasBinaryProperty(ch, UCHAR_ID_CONTINUE);
         }
 
-        int LogicalStringCompare(const char16* string1, const char16* string2)
+#ifndef _WIN32
+        int LogicalStringCompare(const char16* string1, int str1size, const char16* string2, int str2size)
         {
-            return PlatformAgnostic::UnicodeText::Internal::LogicalStringCompareImpl(string1, string2);
+            return PlatformAgnostic::UnicodeText::Internal::LogicalStringCompareImpl(string1, str1size, string2, str2size);
         }
+#endif
 
         bool IsExternalUnicodeLibraryAvailable()
         {

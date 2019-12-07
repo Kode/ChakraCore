@@ -15,6 +15,9 @@ class IRBuilderAsmJs;
 class FlowGraph;
 class GlobOpt;
 class BailOutInfo;
+class GeneratorBailInInfo;
+class SCCLiveness;
+
 struct LazyBailOutRecord;
 
 typedef JsUtil::KeyValuePair<StackSym *, BailoutConstantValue> ConstantStackSymValue;
@@ -49,6 +52,30 @@ struct CapturedValues
     {
         Assert(refCount > 0);
         refCount++;
+    }
+
+    void CopyTo(JitArenaAllocator *allocator, CapturedValues *other) const
+    {
+        Assert(other != nullptr);
+        this->constantValues.CopyTo(allocator, other->constantValues);
+        this->copyPropSyms.CopyTo(allocator, other->copyPropSyms);
+
+        if (other->argObjSyms != nullptr)
+        {
+            other->argObjSyms->ClearAll();
+            JitAdelete(allocator, other->argObjSyms);
+        }
+
+        if (this->argObjSyms != nullptr)
+        {
+            other->argObjSyms = this->argObjSyms->CopyNew(allocator);
+        }
+        else
+        {
+            other->argObjSyms = nullptr;
+        }
+
+        // Ignore refCount because other objects might still reference it
     }
 };
 
@@ -91,6 +118,7 @@ class ProfiledLabelInstr;
 class MultiBranchInstr;
 class PragmaInstr;
 class ByteCodeUsesInstr;
+class GeneratorBailInInstr;
 
 class Opnd;
 class RegOpnd;
@@ -128,8 +156,8 @@ const int32 InvalidInstrLayout = -1;
 ///     ExitInstr
 ///     PragmaInstr
 ///     BailoutInstr
-///     ByteCoteUsesInstr
-///
+///     ByteCodeUsesInstr
+///     GeneratorBailInInstr
 ///---------------------------------------------------------------------------
 
 class Instr
@@ -168,14 +196,17 @@ protected:
         isCtorCall(false),
         isCallInstrProtectedByNoProfileBailout(false),
         hasSideEffects(false),
-        isNonFastPathFrameDisplay(false)
+        isNonFastPathFrameDisplay(false),
+        isSafeToSpeculate(false)
 #if DBG
         , highlight(0)
+        , m_noLazyHelperAssert(false)
 #endif
     {
     }
 public:
     static Instr *  New(Js::OpCode opcode, Func *func);
+    static Instr *  New(Js::OpCode opcode, Func *func, IR::Instr * bytecodeOffsetInstr);
     static Instr *  New(Js::OpCode opcode, Opnd *dstOpnd, Func *func);
     static Instr *  New(Js::OpCode opcode, Opnd *dstOpnd, Opnd *src1Opnd, Func *func);
     static Instr *  New(Js::OpCode opcode, Opnd *dstOpnd, Opnd *src1Opnd, Opnd *src2Opnd, Func *func);
@@ -191,6 +222,9 @@ public:
     BranchInstr *   AsBranchInstr();
     bool            IsLabelInstr() const;
     LabelInstr *    AsLabelInstr();
+    bool            IsGeneratorBailInInstr() const;
+    GeneratorBailInInstr * AsGeneratorBailInInstr();
+
     bool            IsJitProfilingInstr() const;
     JitProfilingInstr * AsJitProfilingInstr();
     bool            IsProfiledInstr() const;
@@ -213,12 +247,16 @@ public:
     bool            StartsBasicBlock() const;
     bool            EndsBasicBlock() const;
     bool            HasFallThrough() const;
-    bool            DoStackArgsOpt(Func *topFunc) const;
+    bool            DoStackArgsOpt() const;
     bool            HasAnyLoadHeapArgsOpCode();
     bool            IsEqual(IR::Instr *instr) const;
 
     bool            IsCloned() const { return isCloned; }
     void            SetIsCloned(bool isCloned) { this->isCloned = isCloned; }
+
+    bool            IsSafeToSpeculate() const { return isSafeToSpeculate; }
+    void            SetIsSafeToSpeculate(bool isSafe) { this->isSafeToSpeculate = isSafe; }
+
     bool            HasBailOutInfo() const { return hasBailOutInfo; }
     bool            HasAuxBailOut() const { return hasAuxBailOut; }
     bool            HasTypeCheckBailOut() const;
@@ -260,11 +298,6 @@ public:
     void            FreeSrc2();
     Opnd *          ReplaceSrc2(Opnd * newSrc);
     Instr *         HoistSrc2(Js::OpCode assignOpcode, RegNum regNum = RegNOREG, StackSym *newSym = nullptr);
-    Instr *         HoistIndirOffset(IndirOpnd *indirOpnd, RegNum regNum = RegNOREG);
-    Instr *         HoistSymOffset(SymOpnd *symOpnd, RegNum baseReg, uint32 offset, RegNum regNum = RegNOREG);
-    Instr *         HoistIndirOffsetAsAdd(IndirOpnd *orgOpnd, IR::Opnd *baseOpnd, int offset,  RegNum regNum);
-    Instr *         HoistSymOffsetAsAdd(SymOpnd *orgOpnd, IR::Opnd *baseOpnd, int offset,  RegNum regNum);
-    Instr *         HoistIndirIndexOpndAsAdd(IR::IndirOpnd *orgOpnd, IR::Opnd *baseOpnd, IR::Opnd *indexOpnd, RegNum regNum);
     IndirOpnd *     HoistMemRefAddress(MemRefOpnd *const memRefOpnd, const Js::OpCode loadOpCode);
     Opnd *          UnlinkSrc(Opnd *src);
     Opnd *          ReplaceSrc(Opnd *oldSrc, Opnd * newSrc);
@@ -280,16 +313,25 @@ public:
     void            SwapOpnds();
     void            TransferTo(Instr * instr);
     void            TransferDstAttributesTo(Instr * instr);
-    IR::Instr *     Copy();
+    IR::Instr *     Copy(bool copyDst = true);
+    IR::Instr *     CopyWithoutDst();
     IR::Instr *     Clone();
-    IR::Instr *     ConvertToBailOutInstr(IR::Instr * bailOutTarget, BailOutKind kind, uint32 bailOutOffset = Js::Constants::NoByteCodeOffset);
-    IR::Instr *     ConvertToBailOutInstr(BailOutInfo * bailOutInfo, BailOutKind kind, bool useAuxBailout = false);
+    IR::Instr *     ConvertToBailOutInstr(IR::Instr *bailOutTarget, BailOutKind kind, uint32 bailOutOffset = Js::Constants::NoByteCodeOffset);
+    IR::Instr *     ConvertToBailOutInstr(BailOutInfo *bailOutInfo, BailOutKind kind, bool useAuxBailout = false);
+    IR::Instr *     ConvertToBailOutInstrWithBailOutInfoCopy(BailOutInfo *bailOutInfo, IR::BailOutKind bailOutKind);
+#if DBG
+    IR::LabelInstr *GetNextNonEmptyLabel() const;
+#endif
     IR::Instr *     GetNextRealInstr() const;
     IR::Instr *     GetNextRealInstrOrLabel() const;
     IR::Instr *     GetNextBranchOrLabel() const;
+    IR::Instr *     GetNextByteCodeInstr() const;
     IR::Instr *     GetPrevRealInstr() const;
     IR::Instr *     GetPrevRealInstrOrLabel() const;
+    IR::LabelInstr *GetPrevLabelInstr() const;
+    IR::Instr *     GetBlockStartInstr() const;
     IR::Instr *     GetInsertBeforeByteCodeUsesInstr();
+    bool            IsByteCodeUsesInstrFor(IR::Instr * instr) const;
     IR::LabelInstr *GetOrCreateContinueLabel(const bool isHelper = false);
     static bool     HasSymUseSrc(StackSym *sym, IR::Opnd*);
     static bool     HasSymUseDst(StackSym *sym, IR::Opnd*);
@@ -297,6 +339,23 @@ public:
     static bool     HasSymUseInRange(StackSym *sym, Instr *instrBegin, Instr *instrEnd);
     RegOpnd *       FindRegDef(StackSym *sym);
     static Instr*   FindSingleDefInstr(Js::OpCode opCode, Opnd* src);
+    bool            CanAggregateByteCodeUsesAcrossInstr(IR::Instr * instr);
+
+    bool            DontHoistBailOnNoProfileAboveInGeneratorFunction() const;
+
+    // LazyBailOut
+    bool            AreAllOpndsTypeSpecialized() const;
+    bool            IsStFldVariant() const;
+    bool            IsStElemVariant() const;
+    bool            CanChangeFieldValueWithoutImplicitCall() const;
+    void            ClearLazyBailOut();
+    bool            OnlyHasLazyBailOut() const;
+    bool            HasLazyBailOut() const;
+    bool            HasPreOpBailOut() const;
+    bool            HasPostOpBailOut() const;
+#if DBG
+    bool            m_noLazyHelperAssert;
+#endif
 
     BranchInstr *   ChangeCmCCToBranchInstr(LabelInstr *targetInstr);
     static void     MoveRangeAfter(Instr * instrStart, Instr * instrLast, Instr * instrAfter);
@@ -324,7 +383,7 @@ public:
 #endif
 #if ENABLE_DEBUG_CONFIG_OPTIONS
     void            DumpTestTrace();
-    void            DumpFieldCopyPropTestTrace();
+    void            DumpFieldCopyPropTestTrace(bool inLandingPad);
 #endif
     uint32          GetByteCodeOffset() const;
     uint32          GetNumber() const;
@@ -361,7 +420,9 @@ public:
     bool            BinaryCalculatorT(T src1Const, T src2Const, int64 *pResult, bool checkWouldTrap);
     bool            UnaryCalculator(IntConstType src1Const, IntConstType *pResult, IRType type);
     IR::Instr*      GetNextArg();
-
+#if DBG
+    bool            ShouldEmitIntRangeCheck();
+#endif
     // Iterates argument chain
     template<class Fn>
     bool IterateArgInstrs(Fn callback)
@@ -467,11 +528,13 @@ public:
     void       MoveArgs(bool generateByteCodeCapture = false);
     void       Move(IR::Instr* insertInstr);
 private:
+    int             GetOpndCount() const;
     void            ClearNumber() { this->m_number = 0; }
     void            SetNumber(uint32 number);
     friend class ::Func;
     friend class ::Lowerer;
     friend class IR::ByteCodeUsesInstr;
+    friend class ::SCCLiveness;
 
     void            SetByteCodeOffset(uint32 number);
     friend class ::IRBuilder;
@@ -498,6 +561,9 @@ public:
     // used only for SIMD Ld/St from typed arrays.
     // we keep these here to avoid increase in number of opcodes and to not use ExtendedArgs
     uint8           dataWidth;
+#if DBG
+    WORD            highlight;
+#endif
 
 
     bool            isFsBased : 1; // TEMP : just for BS testing
@@ -521,8 +587,9 @@ public:
     bool            hasSideEffects : 1; // The instruction cannot be dead stored
     bool            isNonFastPathFrameDisplay : 1;
 protected:
-    bool            isCloned:1;
-    bool            hasBailOutInfo:1;
+    bool            isCloned : 1;
+    bool            hasBailOutInfo : 1;
+    bool            isSafeToSpeculate : 1;
 
     // Used for aux bail out. We are using same bailOutInfo, just different boolean to hide regular bail out.
     // Refer to ConvertToBailOutInstr implementation for details.
@@ -533,11 +600,6 @@ protected:
     Opnd *          m_dst;
     Opnd *          m_src1;
     Opnd *          m_src2;
-#if DBG
-    WORD            highlight;
-#endif
-
-
 
     void Init(Js::OpCode opcode, IRKind kind, Func * func);
     IR::Instr *     CloneInstr() const;
@@ -571,7 +633,10 @@ public:
     // a compare, but still need to generate them for bailouts. Without this, we cause
     // problems because we end up with an instruction losing atomicity in terms of its
     // bytecode use and generation lifetimes.
-    void Aggregate();
+    void AggregateFollowingByteCodeUses();
+
+private:
+    void Aggregate(ByteCodeUsesInstr * byteCodeUsesInstr);
 };
 
 class JitProfilingInstr : public Instr
@@ -740,6 +805,7 @@ public:
     inline void             SetRegion(Region *);
     inline Region *         GetRegion(void) const;
     inline BOOL             IsUnreferenced(void) const;
+    inline BOOL             IsGeneratorEpilogueLabel(void) const;
 
     LabelInstr *            CloneLabel(BOOL fCreate);
 
@@ -810,6 +876,7 @@ public:
     {
 #if DBG
         m_isMultiBranch = false;
+        m_isHelperToNonHelperBranch = false;
         m_leaveConvToBr = false;
 #endif
     }
@@ -1045,6 +1112,25 @@ public:
 #endif
     PragmaInstr * ClonePragma();
     PragmaInstr * CopyPragma();
+};
+
+class GeneratorBailInInstr : public LabelInstr
+{
+private:
+    GeneratorBailInInstr(JitArenaAllocator* allocator, IR::Instr* yieldInstr) :
+        LabelInstr(allocator),
+        yieldInstr(yieldInstr),
+        upwardExposedUses(allocator)
+    {
+        Assert(yieldInstr != nullptr && yieldInstr->m_opcode == Js::OpCode::Yield);
+    }
+
+public:
+    IR::Instr* yieldInstr;
+    CapturedValues capturedValues;
+    BVSparse<JitArenaAllocator> upwardExposedUses;
+
+    static GeneratorBailInInstr* New(IR::Instr* yieldInstr, Func* func);
 };
 
 template <typename InstrType>

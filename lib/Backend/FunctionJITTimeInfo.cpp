@@ -27,6 +27,7 @@ FunctionJITTimeInfo::BuildJITTimeData(
     jitData->isInlined = codeGenData->GetIsInlined();
     jitData->weakFuncRef = (intptr_t)codeGenData->GetWeakFuncRef();
     jitData->inlineesBv = (BVFixedIDL*)(const BVFixed*)codeGenData->inlineesBv;
+    jitData->entryPointInfoAddr = (intptr_t)codeGenData->GetEntryPointInfo();
 
     if (!codeGenData->GetFunctionBody() || !codeGenData->GetFunctionBody()->GetByteCode())
     {
@@ -62,7 +63,7 @@ FunctionJITTimeInfo::BuildJITTimeData(
             Assert(defaultEntryPointInfo->IsFunctionEntryPointInfo());
             Js::FunctionEntryPointInfo *functionEntryPointInfo = static_cast<Js::FunctionEntryPointInfo*>(defaultEntryPointInfo);
             jitData->callsCountAddress = (intptr_t)&functionEntryPointInfo->callsCount;
-                
+
             jitData->sharedPropertyGuards = codeGenData->sharedPropertyGuards;
             jitData->sharedPropGuardCount = codeGenData->sharedPropertyGuardCount;
         }
@@ -90,6 +91,43 @@ FunctionJITTimeInfo::BuildJITTimeData(
                 }
                 jitData->inlinees[i] = AnewStructZ(alloc, FunctionJITTimeDataIDL);
                 BuildJITTimeData(alloc, inlineeJITData, inlineeRuntimeData, jitData->inlinees[i], true, isForegroundJIT);
+            }
+        }
+
+        jitData->callbackInlinees = AnewArrayZ(alloc, FunctionJITTimeDataIDL*, jitData->bodyData->profiledCallSiteCount);
+
+        for (Js::ProfileId i = 0; i < jitData->bodyData->profiledCallSiteCount; ++i)
+        {
+            const Js::FunctionCodeGenJitTimeData * inlineeJITData = codeGenData->GetCallbackInlinee(i);
+            if (inlineeJITData != nullptr)
+            {
+                const Js::FunctionCodeGenRuntimeData * inlineeRuntimeData = nullptr;
+                if (inlineeJITData->GetFunctionInfo()->HasBody())
+                {
+                    inlineeRuntimeData = isInlinee ? targetRuntimeData->GetCallbackInlinee(i) : functionBody->GetCallbackInlineeCodeGenRuntimeData(i);
+                }
+                jitData->callbackInlinees[i] = AnewStructZ(alloc, FunctionJITTimeDataIDL);
+                BuildJITTimeData(alloc, inlineeJITData, inlineeRuntimeData, jitData->callbackInlinees[i], true, isForegroundJIT);
+            }
+        }
+
+        jitData->callApplyTargetInlineeCount = jitData->bodyData->profiledCallApplyCallSiteCount;
+        if (jitData->bodyData->profiledCallApplyCallSiteCount > 0)
+        {
+            jitData->callApplyTargetInlinees = AnewArrayZ(alloc, FunctionJITTimeDataIDL*, jitData->bodyData->profiledCallApplyCallSiteCount);
+        }
+        for (Js::ProfileId i = 0; i < jitData->bodyData->profiledCallApplyCallSiteCount; ++i)
+        {
+            const Js::FunctionCodeGenJitTimeData * inlineeJITData = codeGenData->GetCallApplyTargetInlinee(i);
+            if (inlineeJITData != nullptr)
+            {
+                const Js::FunctionCodeGenRuntimeData * inlineeRuntimeData = nullptr;
+                if (inlineeJITData->GetFunctionInfo()->HasBody())
+                {
+                    inlineeRuntimeData = isInlinee ? targetRuntimeData->GetCallApplyTargetInlinee(i) : functionBody->GetCallApplyTargetInlineeCodeGenRuntimeData(i);
+                }
+                jitData->callApplyTargetInlinees[i] = AnewStructZ(alloc, FunctionJITTimeDataIDL);
+                BuildJITTimeData(alloc, inlineeJITData, inlineeRuntimeData, jitData->callApplyTargetInlinees[i], true, isForegroundJIT);
             }
         }
     }
@@ -186,6 +224,12 @@ FunctionJITTimeInfo::GetFunctionInfoAddr() const
 }
 
 intptr_t
+FunctionJITTimeInfo::GetEntryPointInfoAddr() const
+{
+    return m_data.entryPointInfoAddr;
+}
+
+intptr_t
 FunctionJITTimeInfo::GetWeakFuncRef() const
 {
     return m_data.weakFuncRef;
@@ -251,6 +295,30 @@ FunctionJITTimeInfo::GetLdFldInlineeRuntimeData(const Js::InlineCacheIndex inlin
 }
 
 const FunctionJITRuntimeInfo *
+FunctionJITTimeInfo::GetCallbackInlineeRuntimeData(const Js::ProfileId profiledCallSiteId) const
+{
+    return GetCallbackInlinee(profiledCallSiteId) ? GetCallbackInlinee(profiledCallSiteId)->GetRuntimeInfo() : nullptr;
+}
+
+const FunctionJITRuntimeInfo *
+FunctionJITTimeInfo::GetInlineeForCallbackInlineeRuntimeData(const Js::ProfileId profiledCallSiteId, intptr_t inlineeFuncBodyAddr) const
+{
+    const FunctionJITTimeInfo *inlineeData = GetCallbackInlinee(profiledCallSiteId);
+    while (inlineeData && inlineeData->GetBody()->GetAddr() != inlineeFuncBodyAddr)
+    {
+        inlineeData = inlineeData->GetNext();
+    }
+    __analysis_assume(inlineeData != nullptr);
+    return inlineeData->GetRuntimeInfo();
+}
+
+const FunctionJITRuntimeInfo *
+FunctionJITTimeInfo::GetCallApplyTargetInlineeRuntimeData(const Js::ProfileId callApplyCallSiteId) const
+{
+    return GetCallApplyTargetInlinee(callApplyCallSiteId) ? GetCallApplyTargetInlinee(callApplyCallSiteId)->GetRuntimeInfo() : nullptr;
+}
+
+const FunctionJITRuntimeInfo *
 FunctionJITTimeInfo::GetRuntimeInfo() const
 {
     return reinterpret_cast<const FunctionJITRuntimeInfo*>(m_data.profiledRuntimeData);
@@ -259,13 +327,25 @@ FunctionJITTimeInfo::GetRuntimeInfo() const
 ObjTypeSpecFldInfo *
 FunctionJITTimeInfo::GetObjTypeSpecFldInfo(uint index) const
 {
-    AssertOrFailFast(index < GetBody()->GetInlineCacheCount());
     if (m_data.objTypeSpecFldInfoArray == nullptr)
     {
         return nullptr;
     }
+    AssertOrFailFast(index < m_data.objTypeSpecFldInfoCount);
 
     return reinterpret_cast<ObjTypeSpecFldInfo *>(m_data.objTypeSpecFldInfoArray[index]);
+}
+
+void
+FunctionJITTimeInfo::ClearObjTypeSpecFldInfo(uint index)
+{
+    if (m_data.objTypeSpecFldInfoArray == nullptr)
+    {
+        return;
+    }
+    AssertOrFailFast(index < m_data.objTypeSpecFldInfoCount);
+
+    m_data.objTypeSpecFldInfoArray[index] = nullptr;
 }
 
 ObjTypeSpecFldInfo *
@@ -288,6 +368,31 @@ FunctionJITTimeInfo::GetSourceContextId() const
     Assert(HasBody());
 
     return GetBody()->GetSourceContextId();
+}
+
+const FunctionJITTimeInfo *
+FunctionJITTimeInfo::GetCallbackInlinee(Js::ProfileId profileId) const
+{
+    Assert(profileId < m_data.bodyData->profiledCallSiteCount);
+    if (!m_data.callbackInlinees)
+    {
+        return nullptr;
+    }
+    AssertOrFailFast(profileId < m_data.inlineeCount);
+
+    return reinterpret_cast<const FunctionJITTimeInfo *>(m_data.callbackInlinees[profileId]);
+}
+
+const FunctionJITTimeInfo *
+FunctionJITTimeInfo::GetCallApplyTargetInlinee(Js::ProfileId callApplyCallSiteId) const
+{
+    if (!m_data.callApplyTargetInlinees)
+    {
+        return nullptr;
+    }
+    AssertOrFailFast(callApplyCallSiteId < m_data.bodyData->profiledCallApplyCallSiteCount);
+
+    return reinterpret_cast<const FunctionJITTimeInfo *>(m_data.callApplyTargetInlinees[callApplyCallSiteId]);
 }
 
 const FunctionJITTimeInfo *

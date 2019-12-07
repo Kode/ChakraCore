@@ -181,6 +181,13 @@
   (func (export "as-set_local-value") (result i32) (local f32)
     (block (result i32) (set_local 0 (br 0 (i32.const 17))) (i32.const -1))
   )
+  (func (export "as-tee_local-value") (result i32) (local i32)
+    (block (result i32) (tee_local 0 (br 0 (i32.const 1))))
+  )
+  (global $a (mut i32) (i32.const 10))
+  (func (export "as-set_global-value") (result i32)
+    (block (result i32) (set_global $a (br 0 (i32.const 1))))
+  )
 
   (memory 1)
   (func (export "as-load-address") (result f32)
@@ -238,8 +245,8 @@
     (block (result i32) (i32.wrap/i64 (br 0 (i32.const 41))))
   )
 
-  (func (export "as-grow_memory-size") (result i32)
-    (block (result i32) (grow_memory (br 0 (i32.const 40))))
+  (func (export "as-memory.grow-size") (result i32)
+    (block (result i32) (memory.grow (br 0 (i32.const 40))))
   )
 
   (func (export "nested-block-value") (result i32)
@@ -377,6 +384,8 @@
 (assert_return (invoke "as-call_indirect-last") (i32.const 23))
 
 (assert_return (invoke "as-set_local-value") (i32.const 17))
+(assert_return (invoke "as-tee_local-value") (i32.const 1))
+(assert_return (invoke "as-set_global-value") (i32.const 1))
 
 (assert_return (invoke "as-load-address") (f32.const 1.7))
 (assert_return (invoke "as-loadN-address") (i64.const 30))
@@ -398,7 +407,7 @@
 
 (assert_return (invoke "as-convert-operand") (i32.const 41))
 
-(assert_return (invoke "as-grow_memory-size") (i32.const 40))
+(assert_return (invoke "as-memory.grow-size") (i32.const 40))
 
 (assert_return (invoke "nested-block-value") (i32.const 9))
 (assert_return (invoke "nested-br-value") (i32.const 9))

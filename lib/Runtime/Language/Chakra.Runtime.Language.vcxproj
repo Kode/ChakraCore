@@ -39,8 +39,6 @@
       </AdditionalIncludeDirectories>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>RuntimeLanguagePch.h</PrecompiledHeaderFile>
-      <!-- # Check out https://osgwiki.com/wiki/Dev_14_Migration for more details about -Zc:implicitNoexcept- -->
-      <AdditionalOptions>-Zc:implicitNoexcept- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -163,6 +161,7 @@
     </ClCompile>
     <ClCompile Include="$(MSBuildThisFileDirectory)SimdUtils.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)SourceDynamicProfileManager.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)SimpleDataCacheWrapper.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)StackTraceArguments.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)TaggedInt.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ValueType.cpp" />
@@ -227,6 +226,7 @@
     <ClInclude Include="ModuleNamespace.h" />
     <ClInclude Include="ModuleNamespaceEnumerator.h" />
     <ClInclude Include="ProfilingHelpers.h" />
+    <ClInclude Include="PropertyGuard.h" />
     <ClInclude Include="PrototypeChainCache.h" />
     <ClInclude Include="SourceDynamicProfileManager.h" />
     <ClInclude Include="ModuleRecordBase.h" />
@@ -255,6 +255,7 @@
     <ClInclude Include="SimdBool8x16Operation.h" />
     <ClInclude Include="SimdOps.h" />
     <ClInclude Include="SimdUtils.h" />
+    <ClInclude Include="SimpleDataCacheWrapper.h" />
     <ClInclude Include="TaggedInt.h" />
     <ClInclude Include="RuntimeLanguagePch.h" />
     <ClInclude Include="WAsmjsUtils.h" />

@@ -7,11 +7,7 @@
 
 #if DYNAMIC_INTERPRETER_THUNK
 #define DefaultEntryThunk Js::InterpreterStackFrame::DelayDynamicInterpreterThunk
-#if _M_X64
 #define AsmJsDefaultEntryThunk Js::InterpreterStackFrame::AsmJsDelayDynamicInterpreterThunk
-#elif _M_IX86
-#define AsmJsDefaultEntryThunk Js::InterpreterStackFrame::DelayDynamicInterpreterThunk
-#endif
 #else
 #define DefaultEntryThunk Js::InterpreterStackFrame::InterpreterThunk
 #endif
@@ -50,7 +46,6 @@ typedef double  FloatConstType;
 #include "IRType.h"
 #include "InlineeFrameInfo.h"
 #include "CodeGenAllocators.h"
-#include "PropertyGuard.h"
 
 NativeCodeGenerator * NewNativeCodeGenerator(Js::ScriptContext * nativeCodeGen);
 void DeleteNativeCodeGenerator(NativeCodeGenerator * nativeCodeGen);
@@ -147,19 +142,16 @@ class BailOutRecord;
 struct LazyBailOutRecord
 {
     uint32 offset;
-    BYTE* instructionPointer; // Instruction pointer of the bailout code
-    BailOutRecord* bailoutRecord;
+    BailOutRecord* bailOutRecord;
 
-    LazyBailOutRecord() : offset(0), instructionPointer(nullptr), bailoutRecord(nullptr) {}
+    LazyBailOutRecord() : offset(0), bailOutRecord(nullptr) {}
 
-    LazyBailOutRecord(uint32 offset, BYTE* address, BailOutRecord* record) :
-        offset(offset), instructionPointer(address),
-        bailoutRecord(record)
+    LazyBailOutRecord(uint32 offset, BailOutRecord* record) :
+        offset(offset), bailOutRecord(record)
     {}
 
-    void SetBailOutKind();
 #if DBG
-    void Dump(Js::FunctionBody* functionBody);
+    void Dump(Js::FunctionBody* functionBody) const;
 #endif
 };
 
@@ -273,9 +265,23 @@ enum VTableValue {
     VtableJavascriptNativeIntArray,
     VtableJavascriptRegExp,
     VtableScriptFunction,
+
+    VtableScriptFunctionWithHomeObj,
+    VtableScriptFunctionWithComputedName,
+    VtableScriptFunctionWithHomeObjAndComputedName,
+
+    // Generator/Async functions
     VtableJavascriptGeneratorFunction,
+    VtableVirtualJavascriptGeneratorFunctionWithHomeObj,
+    VtableVirtualJavascriptGeneratorFunctionWithComputedName,
+    VtableVirtualJavascriptGeneratorFunctionWithHomeObjAndComputedName,
     VtableJavascriptAsyncFunction,
+
     VtableStackScriptFunction,
+    VtableAsmJsScriptFunctionWithComputedName,
+    VtableScriptFunctionWithInlineCacheAndHomeObj,
+    VtableScriptFunctionWithInlineCacheAndComputedName,
+    VtableScriptFunctionWithInlineCacheHomeObjAndComputedName,
     VtableConcatStringMulti,
     VtableCompoundString,
     // SIMD_JS

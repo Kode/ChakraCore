@@ -4,8 +4,8 @@
 //-------------------------------------------------------------------------------------------------------
 #include "RuntimeTypePch.h"
 
-namespace Js
-{
+using namespace Js;
+
     BigPropertyIndex
     DynamicTypeHandler::GetPropertyIndexFromInlineSlotIndex(uint inlineSlot)
     {
@@ -64,7 +64,8 @@ namespace Js
         flags(flags),
         propertyTypes(PropertyTypesWritableDataOnly | PropertyTypesReserved),
         offsetOfInlineSlots(offsetOfInlineSlots),
-        unusedBytes(Js::AtomTag)
+        unusedBytes(Js::AtomTag),
+        protoCachesWereInvalidated(false)
     {
         Assert(!GetIsOrMayBecomeShared() || GetIsLocked());
         Assert(offsetOfInlineSlots != 0 || inlineSlotCapacity == 0);
@@ -76,7 +77,6 @@ namespace Js
                 ? RoundUpObjectHeaderInlinedInlineSlotCapacity(inlineSlotCapacity)
                 : RoundUpInlineSlotCapacity(inlineSlotCapacity);
         this->slotCapacity = RoundUpSlotCapacity(slotCapacity, inlineSlotCapacity);
-        this->isNotPathTypeHandlerOrHasUserDefinedCtor = true;
 
         Assert(IsObjectHeaderInlinedTypeHandler() == IsObjectHeaderInlined(offsetOfInlineSlots));
     }
@@ -263,7 +263,7 @@ namespace Js
     }
 
     template<bool isStoreField>
-    void DynamicTypeHandler::InvalidateInlineCachesForAllProperties(ScriptContext* requestContext)
+    bool DynamicTypeHandler::InvalidateInlineCachesForAllProperties(ScriptContext* requestContext)
     {
         int count = GetPropertyCount();
         if (count < 128) // Invalidate a propertyId involves dictionary lookups. Only do this when the number is relatively small.
@@ -276,31 +276,51 @@ namespace Js
                     isStoreField ? requestContext->InvalidateStoreFieldCaches(propertyId) : requestContext->InvalidateProtoCaches(propertyId);
                 }
             }
+            return false;
         }
         else
         {
             isStoreField ? requestContext->InvalidateAllStoreFieldCaches() : requestContext->InvalidateAllProtoCaches();
+            return true;
         }
     }
 
-    void DynamicTypeHandler::InvalidateProtoCachesForAllProperties(ScriptContext* requestContext)
+    bool DynamicTypeHandler::InvalidateProtoCachesForAllProperties(ScriptContext* requestContext)
     {
-        InvalidateInlineCachesForAllProperties<false>(requestContext);
+        bool result = InvalidateInlineCachesForAllProperties<false>(requestContext);
+        this->SetProtoCachesWereInvalidated();
+        return result;
     }
 
-    void DynamicTypeHandler::InvalidateStoreFieldCachesForAllProperties(ScriptContext* requestContext)
+    bool DynamicTypeHandler::InvalidateStoreFieldCachesForAllProperties(ScriptContext* requestContext)
     {
-        InvalidateInlineCachesForAllProperties<true>(requestContext);
+        return InvalidateInlineCachesForAllProperties<true>(requestContext);
     }
 
-    void DynamicTypeHandler::RemoveFromPrototype(DynamicObject* instance, ScriptContext * requestContext)
+    bool DynamicTypeHandler::ClearProtoCachesWereInvalidated()
     {
-        InvalidateProtoCachesForAllProperties(requestContext);
+        bool done = !this->ProtoCachesWereInvalidated();
+        this->protoCachesWereInvalidated = false;
+        return done;
     }
 
-    void DynamicTypeHandler::AddToPrototype(DynamicObject* instance, ScriptContext * requestContext)
+    void DynamicTypeHandler::RemoveFromPrototype(DynamicObject* instance, ScriptContext * requestContext, bool * allProtoCachesInvalidated)
     {
-        InvalidateStoreFieldCachesForAllProperties(requestContext);
+        Assert(!*allProtoCachesInvalidated);
+        *allProtoCachesInvalidated = InvalidateProtoCachesForAllProperties(requestContext);
+    }
+
+    void DynamicTypeHandler::AddToPrototype(DynamicObject* instance, ScriptContext * requestContext, bool * allProtoCachesInvalidated)
+    {
+        Assert(!*allProtoCachesInvalidated);
+        if (this->ProtoCachesWereInvalidated())
+        {
+            *allProtoCachesInvalidated = true;
+        }
+        else
+        {
+            *allProtoCachesInvalidated = InvalidateProtoCachesForAllProperties(requestContext);
+        }
     }
 
     void DynamicTypeHandler::SetPrototype(DynamicObject* instance, RecyclableObject* newPrototype)
@@ -418,14 +438,14 @@ namespace Js
         LPCWSTR fixedPropertyResultType = nullptr;
         bool log = false;
 
-        if (pProperty && *pProperty && ((Js::JavascriptFunction::Is(*pProperty) && (PHASE_VERBOSE_TRACE1(Js::FixedMethodsPhase) || PHASE_VERBOSE_TESTTRACE1(Js::FixedMethodsPhase))) ||
+        if (pProperty && *pProperty && ((Js::VarIs<Js::JavascriptFunction>(*pProperty) && (PHASE_VERBOSE_TRACE1(Js::FixedMethodsPhase) || PHASE_VERBOSE_TESTTRACE1(Js::FixedMethodsPhase))) ||
             ((PHASE_VERBOSE_TRACE1(Js::UseFixedDataPropsPhase) || PHASE_VERBOSE_TESTTRACE1(Js::UseFixedDataPropsPhase))) ))
         {
             if(*pProperty == nullptr)
             {
                 fixedPropertyResultType = _u("null");
             }
-            else if (Js::JavascriptFunction::Is(*pProperty))
+            else if (Js::VarIs<Js::JavascriptFunction>(*pProperty))
             {
                 fixedPropertyResultType = _u("function");
             }
@@ -541,7 +561,6 @@ namespace Js
                 scriptContext->optimizationOverrides.SetSideEffects((SideEffects)(SideEffects_ValueOf & possibleSideEffects));
                 scriptContext->optimizationOverrides.SetSideEffects((SideEffects)(SideEffects_ToString & possibleSideEffects));
             }
-
             else if (propertyId == PropertyIds::valueOf)
             {
                 scriptContext->optimizationOverrides.SetSideEffects((SideEffects)(SideEffects_ValueOf & possibleSideEffects));
@@ -636,6 +655,7 @@ namespace Js
         const PropertyIndex newInlineSlotCapacity,
         const int newAuxSlotCapacity)
     {
+        JIT_HELPER_NOT_REENTRANT_NOLOCK_HEADER(AdjustSlots);
         Assert(object);
 
         // The JIT may call AdjustSlots multiple times on the same object, even after changing its type to the new type. Check
@@ -649,6 +669,7 @@ namespace Js
         }
 
         AdjustSlots(object, newInlineSlotCapacity, newAuxSlotCapacity);
+        JIT_HELPER_END(AdjustSlots);
     }
 
     void DynamicTypeHandler::AdjustSlots(
@@ -669,7 +690,7 @@ namespace Js
         if(oldInlineSlotCapacity == newInlineSlotCapacity)
         {
             const int oldAuxSlotCapacity = oldTypeHandler->GetSlotCapacity() - oldInlineSlotCapacity;
-            Assert(oldAuxSlotCapacity < newAuxSlotCapacity);
+            AssertOrFailFast(oldAuxSlotCapacity < newAuxSlotCapacity);
             if(oldAuxSlotCapacity > 0)
             {
                 // Copy aux slots to the new array
@@ -862,7 +883,5 @@ namespace Js
         Output::Print(_u("%*sslotCapacity: %d\n"), fieldIndent, padding, this->slotCapacity);
         Output::Print(_u("%*sunusedBytes: %u\n"), fieldIndent, padding, this->unusedBytes);
         Output::Print(_u("%*sinlineSlotCapacty: %u\n"), fieldIndent, padding, this->inlineSlotCapacity);
-        Output::Print(_u("%*sisNotPathTypeHandlerOrHasUserDefinedCtor: %d\n"), fieldIndent, padding, static_cast<int>(this->isNotPathTypeHandlerOrHasUserDefinedCtor));
     }
 #endif
-}

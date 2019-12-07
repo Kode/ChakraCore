@@ -154,6 +154,13 @@
   (func (export "as-set_local-value") (local f32)
     (set_local 0 (unreachable))
   )
+  (func (export "as-tee_local-value") (result f32) (local f32)
+    (tee_local 0 (unreachable))
+  )
+  (global $a (mut f32) (f32.const 0))
+  (func (export "as-set_global-value") (result f32)
+    (set_global $a (unreachable))
+  )
 
   (memory 1)
   (func (export "as-load-address") (result f32)
@@ -203,8 +210,8 @@
     (i32.wrap/i64 (unreachable))
   )
 
-  (func (export "as-grow_memory-size") (result i32)
-    (grow_memory (unreachable))
+  (func (export "as-memory.grow-size") (result i32)
+    (memory.grow (unreachable))
   )
 )
 
@@ -265,6 +272,8 @@
 (assert_trap (invoke "as-call_indirect-last") "unreachable")
 
 (assert_trap (invoke "as-set_local-value") "unreachable")
+(assert_trap (invoke "as-tee_local-value") "unreachable")
+(assert_trap (invoke "as-set_global-value") "unreachable")
 
 (assert_trap (invoke "as-load-address") "unreachable")
 (assert_trap (invoke "as-loadN-address") "unreachable")
@@ -286,5 +295,5 @@
 
 (assert_trap (invoke "as-convert-operand") "unreachable")
 
-(assert_trap (invoke "as-grow_memory-size") "unreachable")
+(assert_trap (invoke "as-memory.grow-size") "unreachable")
 

@@ -47,17 +47,20 @@ namespace Js
         class Setup
         {
         public:
-            Setup(ScriptFunction * function, Arguments& args, bool bailout = false, bool inlinee = false);
+            Setup(ScriptFunction * function, Arguments& args, bool bailout = false, bool inlinee = false, bool isGeneratorFrame = false);
             Setup(ScriptFunction * function, Var * inParams, int inSlotsCount);
             size_t GetAllocationVarCount() const { return varAllocCount; }
+            size_t GetStackAllocationVarCount() const { return stackVarAllocCount; }
 
             InterpreterStackFrame * AllocateAndInitialize(bool doProfile, bool * releaseAlloc);
 
+            InterpreterStackFrame * InitializeAllocation(__in_ecount(varAllocCount) Var * allocation, __in_ecount(stackVarAllocCount) Var * stackAllocation
+                                                         , bool initParams, bool profileParams, LoopHeader* loopHeaderArray, DWORD_PTR stackAddr
 #if DBG
-            InterpreterStackFrame * InitializeAllocation(__in_ecount(varAllocCount) Var * allocation, bool initParams, bool profileParams, LoopHeader* loopHeaderArray, DWORD_PTR stackAddr, Var invalidStackVar);
-#else
-            InterpreterStackFrame * InitializeAllocation(__in_ecount(varAllocCount) Var * allocation, bool initParams, bool profileParams, LoopHeader* loopHeaderArray, DWORD_PTR stackAddr);
+                                                         , Var invalidStackVar
 #endif
+            );
+
             uint GetLocalCount() const { return localCount; }
 
         private:
@@ -75,10 +78,16 @@ namespace Js
             int inSlotsCount;
             uint localCount;
             uint varAllocCount;
+            uint stackVarAllocCount;
             uint inlineCacheCount;
             Js::CallFlags callFlags;
             bool bailedOut;
             bool bailedOutOfInlinee;
+
+            // Indicate whether this InterpreterStackFrame belongs to a generator function
+            // We use this flag to determine whether we need to allocate more space for
+            // objects such as for-in enumerators in a generator.
+            bool isGeneratorFrame;
         };
 
         struct AsmJsReturnStruct
@@ -106,7 +115,7 @@ namespace Js
         Var* m_inParams;                // Range of 'in' parameters
         Var* m_outParams;               // Range of 'out' parameters (offset in m_localSlots)
         Var* m_outSp;                   // Stack pointer for next outparam
-        Var* m_outSpCached;             // Stack pointer for caching previos SP (in order to assist in try..finally)
+        Var* m_outSpCached;             // Stack pointer for caching previous SP (in order to assist in try..finally)
         Var  m_arguments;               // Dedicated location for this frame's arguments object
         StackScriptFunction * stackNestedFunctions;
         FrameDisplay * localFrameDisplay;
@@ -152,7 +161,6 @@ namespace Js
         uint retOffset;
         int16 nestedFinallyDepth;
 
-
         void (InterpreterStackFrame::*opLoopBodyStart)(uint32 loopNumber, LayoutSize layoutSize, bool isFirstIteration);
 #if ENABLE_PROFILE_INFO
         void (InterpreterStackFrame::*opProfiledLoopBodyStart)(uint32 loopNumber, LayoutSize layoutSize, bool isFirstIteration);
@@ -186,9 +194,6 @@ namespace Js
 
         // 16-byte aligned
         __declspec(align(16)) Var m_localSlots[0];           // Range of locals and temporaries
-
-        static const int LocalsThreshold = 32 * 1024; // Number of locals vars we'll allocate on the frame.
-                                                      // If there are more, we'll use an arena.
 
         //This class must have an empty ctor (otherwise it will break the code in InterpreterStackFrame::InterpreterThunk
         inline InterpreterStackFrame() { }
@@ -273,6 +278,11 @@ namespace Js
         template <class T> void OP_SimdBool16x8(const unaligned T* playout);
         template <class T> void OP_SimdBool8x16(const unaligned T* playout);
 
+        static void OP_AsyncYield(Var yieldDataVar, Var value, ScriptContext* scriptContext);
+        static void OP_AsyncYieldStar(Var yieldDataVar, Var value, ScriptContext* scriptContext);
+        static void OP_Await(Var yieldDataVar, Var value, ScriptContext* scriptContext);
+        static Var OP_AsyncYieldIsReturn(Var yieldDataVar);
+
         template <typename RegSlotType>
         Var GetRegAllowStackVarEnableOnly(RegSlotType localRegisterID) const;
         template <typename RegSlotType>
@@ -310,11 +320,16 @@ namespace Js
         void * GetReturnAddress() { return returnAddress; }
 
         static uint32 GetOffsetOfLocals() { return offsetof(InterpreterStackFrame, m_localSlots); }
-        static uint32 GetOffsetOfArguments() { return offsetof(InterpreterStackFrame, m_arguments); }
+
         static uint32 GetOffsetOfInParams() { return offsetof(InterpreterStackFrame, m_inParams); }
         static uint32 GetOffsetOfInSlotsCount() { return offsetof(InterpreterStackFrame, m_inSlotsCount); }
         static uint32 GetOffsetOfStackNestedFunctions() { return offsetof(InterpreterStackFrame, stackNestedFunctions); }
         static uint32 GetOffsetOfForInEnumerators() { return offsetof(InterpreterStackFrame, forInObjectEnumerators); }
+
+        static uint32 GetOffsetOfArguments() { return offsetof(InterpreterStackFrame, m_arguments); }
+        static uint32 GetOffsetOfLocalFrameDisplay() { return offsetof(InterpreterStackFrame, localFrameDisplay); }
+        static uint32 GetOffsetOfLocalClosure() { return offsetof(InterpreterStackFrame, localClosure); }
+        static uint32 GetOffsetOfParamClosure() { return offsetof(InterpreterStackFrame, paramClosure); }
 
         static uint32 GetStartLocationOffset() { return offsetof(InterpreterStackFrame, m_reader) + ByteCodeReader::GetStartLocationOffset(); }
         static uint32 GetCurrentLocationOffset() { return offsetof(InterpreterStackFrame, m_reader) + ByteCodeReader::GetCurrentLocationOffset(); }
@@ -344,11 +359,7 @@ namespace Js
         template <typename T>
         static T AsmJsInterpreter(AsmJsCallStackLayout* layout);
         static void * GetAsmJsInterpreterEntryPoint(AsmJsCallStackLayout* stack);
-
-        static Var AsmJsDelayDynamicInterpreterThunk(RecyclableObject* function, CallInfo callInfo, ...);
-
         static __m128 AsmJsInterpreterSimdJs(AsmJsCallStackLayout* func);
-
 #endif
 
 #ifdef ASMJS_PLAT
@@ -357,6 +368,7 @@ namespace Js
 #endif
 
 #if DYNAMIC_INTERPRETER_THUNK
+        static Var AsmJsDelayDynamicInterpreterThunk(RecyclableObject* function, CallInfo callInfo, ...);
         static Var DelayDynamicInterpreterThunk(RecyclableObject* function, CallInfo callInfo, ...);
         _NOINLINE static Var InterpreterThunk(JavascriptCallStackLayout* layout);
         _NOINLINE static Var StaticInterpreterThunk(RecyclableObject* function, CallInfo callInfo, ...);
@@ -364,10 +376,16 @@ namespace Js
         _NOINLINE static Var InterpreterThunk(RecyclableObject* function, CallInfo callInfo, ...);
 #endif
         static Var InterpreterHelper(ScriptFunction* function, ArgumentReader args, void* returnAddress, void* addressOfReturnAddress, AsmJsReturnStruct* asmReturn = nullptr);
-        static const bool ShouldDoProfile(FunctionBody* executeFunction);
+        static bool ShouldDoProfile(FunctionBody* executeFunction);
         static InterpreterStackFrame* CreateInterpreterStackFrameForGenerator(ScriptFunction* function, FunctionBody* executeFunction, JavascriptGenerator* generator, bool doProfile);
 
         void InitializeClosures();
+
+        static void OP_StPropIdArrFromVar(Var instance, uint32 index, Var value, ScriptContext* scriptContext);
+        static Js::PropertyIdArray * OP_NewPropIdArrForCompProps(uint32 size, ScriptContext* scriptContext);
+
+        static const int LocalsThreshold = 32 * 1024; // Number of locals vars we'll allocate on the frame.
+                                                      // If there are more, we'll use an arena.
 
     private:
 #if DYNAMIC_INTERPRETER_THUNK
@@ -467,7 +485,7 @@ namespace Js
         BOOL OP_BrNotUndecl_A(Var aValue);
         BOOL OP_BrOnHasProperty(Var argInstance, uint propertyIdIndex, ScriptContext* scriptContext);
         BOOL OP_BrOnNoProperty(Var argInstance, uint propertyIdIndex, ScriptContext* scriptContext);
-        BOOL OP_BrOnNoEnvProperty(Var envInstance, int32 slotIndex, uint propertyIdIndex, ScriptContext* scriptContext);
+        BOOL OP_BrOnHasEnvProperty(Var envInstance, int32 slotIndex, uint propertyIdIndex, ScriptContext* scriptContext);
         BOOL OP_BrOnClassConstructor(Var aValue);
         BOOL OP_BrOnBaseConstructorKind(Var aValue);
 
@@ -555,9 +573,11 @@ namespace Js
         template <class T> void OP_SetProperty(unaligned T* playout);
         template <class T> void OP_SetLocalProperty(unaligned T* playout);
         template <class T> void OP_SetSuperProperty(unaligned T* playout);
+        template <class T> void OP_SetSuperPropertyStrict(unaligned T* playout);
         template <class T> void OP_ProfiledSetProperty(unaligned T* playout);
         template <class T> void OP_ProfiledSetLocalProperty(unaligned T* playout);
         template <class T> void OP_ProfiledSetSuperProperty(unaligned T* playout);
+        template <class T> void OP_ProfiledSetSuperPropertyStrict(unaligned T* playout);
         template <class T> void OP_SetRootProperty(unaligned T* playout);
         template <class T> void OP_ProfiledSetRootProperty(unaligned T* playout);
         template <class T> void OP_SetPropertyStrict(unaligned T* playout);
@@ -615,6 +635,8 @@ namespace Js
         template<class T> void OP_LdLen(const unaligned T *const playout);
         template<class T> void OP_ProfiledLdLen(const unaligned OpLayoutDynamicProfile<T> *const playout);
 
+        template <bool doProfile> Var ProfiledIsIn(Var argProperty, Var instance, ScriptContext* scriptContext, ProfileId profileId);
+
         Var OP_ProfiledLdThis(Var thisVar, int moduleID, ScriptContext* scriptContext);
         Var OP_ProfiledStrictLdThis(Var thisVar, ScriptContext* scriptContext);
 
@@ -630,8 +652,10 @@ namespace Js
         template <class T> void OP_ProfiledNewScArray_NoProfile(const unaligned OpLayoutDynamicProfile<T> * playout)  { ProfiledNewScArray<false, T>(playout); }
         void OP_NewScIntArray(const unaligned OpLayoutAuxiliary * playout);
         void OP_NewScFltArray(const unaligned OpLayoutAuxiliary * playout);
-        void OP_ProfiledNewScIntArray(const unaligned OpLayoutDynamicProfile<OpLayoutAuxiliary> * playout);
-        void OP_ProfiledNewScFltArray(const unaligned OpLayoutDynamicProfile<OpLayoutAuxiliary> * playout);
+        template <bool Profiled> void ProfiledNewScIntArray(const unaligned OpLayoutDynamicProfile<OpLayoutAuxiliary> * playout);
+        template <bool Profiled> void ProfiledNewScFltArray(const unaligned OpLayoutDynamicProfile<OpLayoutAuxiliary> * playout);
+        void OP_ProfiledNewScIntArray(const unaligned OpLayoutDynamicProfile<OpLayoutAuxiliary> * playout) { ProfiledNewScIntArray<true>(playout); }
+        void OP_ProfiledNewScFltArray(const unaligned OpLayoutDynamicProfile<OpLayoutAuxiliary> * playout) { ProfiledNewScFltArray<true>(playout); }
 
         template <class T> void OP_LdArrayHeadSegment(const unaligned T* playout);
 
@@ -643,6 +667,7 @@ namespace Js
         void OP_StFunctionExpression(Var instance, Var value, PropertyIdIndexType index);
 
         template <class T> inline void OP_LdNewTarget(const unaligned T* playout);
+        template <class T> inline void OP_LdImportMeta(const unaligned T* playout);
 
         inline Var OP_Ld_A(Var aValue);
         inline Var OP_LdLocalObj();
@@ -652,6 +677,7 @@ namespace Js
 
         void OP_EnsureNoRootProperty(uint propertyIdIndex);
         void OP_EnsureNoRootRedeclProperty(uint propertyIdIndex);
+        void OP_EnsureCanDeclGloFunc(uint propertyIdIndex);
         void OP_ScopedEnsureNoRedeclProperty(Var aValue, uint propertyIdIndex, Var aValue2);
         Var OP_InitUndecl();
         void OP_InitUndeclSlot(Var aValue, int32 slot);
@@ -732,19 +758,21 @@ namespace Js
         template <bool Profile, bool JITLoopBody> void ProfiledLoopBodyStart(uint32 loopNumber, LayoutSize layoutSize, bool isFirstIteration);
         void OP_RecordImplicitCall(uint loopNumber);
         template <class T, bool Profiled, bool ICIndex> void OP_NewScObject_Impl(const unaligned T* playout, InlineCacheIndex inlineCacheIndex = Js::Constants::NoInlineCacheIndex, const Js::AuxArray<uint32> *spreadIndices = nullptr);
-        template <class T, bool Profiled> void OP_NewScObjArray_Impl(const unaligned T* playout, const Js::AuxArray<uint32> *spreadIndices = nullptr);
+        template <class T, bool Profiled, bool ICIndex> void OP_ProfiledNewScObject_Impl(const unaligned T* playout, InlineCacheIndex inlineCacheIndex = Js::Constants::NoInlineCacheIndex, const Js::AuxArray<uint32> *spreadIndices = nullptr) { OP_NewScObject_Impl<T, Profiled, ICIndex>(playout, inlineCacheIndex, spreadIndices); }
+        template <class T, bool Profiled> void OP_NewScObjArray_Impl(const unaligned T* playout, const Js::AuxArray<uint32> *spreadIndices = nullptr) { OP_NewScObject_Impl<T, Profiled, false>(playout, Js::Constants::NoInlineCacheIndex, spreadIndices); }
+        template <class T, bool Profiled> void OP_ProfiledNewScObjArray_Impl(const unaligned T* playout, const Js::AuxArray<uint32> *spreadIndices = nullptr);
         template <class T> void OP_NewScObject(const unaligned T* playout) { OP_NewScObject_Impl<T, false, false>(playout); }
         template <class T> void OP_NewScObjectNoCtorFull(const unaligned T* playout);
         template <class T> void OP_NewScObjectSpread(const unaligned T* playout) { OP_NewScObject_Impl<T, false, false>(playout, Js::Constants::NoInlineCacheIndex, m_reader.ReadAuxArray<uint32>(playout->SpreadAuxOffset, this->GetFunctionBody())); }
         template <class T> void OP_NewScObjArray(const unaligned T* playout) { OP_NewScObjArray_Impl<T, false>(playout); }
         template <class T> void OP_NewScObjArraySpread(const unaligned T* playout) { OP_NewScObjArray_Impl<T, false>(playout, m_reader.ReadAuxArray<uint32>(playout->SpreadAuxOffset, this->GetFunctionBody())); }
-        template <class T> void OP_ProfiledNewScObject(const unaligned OpLayoutDynamicProfile<T>* playout) { OP_NewScObject_Impl<T, true, false>(playout); }
-        template <class T> void OP_ProfiledNewScObjectSpread(const unaligned OpLayoutDynamicProfile<T>* playout) { OP_NewScObject_Impl<T, true, false>(playout, Js::Constants::NoInlineCacheIndex, m_reader.ReadAuxArray<uint32>(playout->SpreadAuxOffset, this->GetFunctionBody())); }
-        template <class T> void OP_ProfiledNewScObjectWithICIndex(const unaligned OpLayoutDynamicProfile<T>* playout) { OP_NewScObject_Impl<T, true, true>(playout, playout->inlineCacheIndex); }
-        template <class T> void OP_ProfiledNewScObjArray(const unaligned OpLayoutDynamicProfile2<T>* playout) { OP_NewScObjArray_Impl<T, true>(playout); }
-        template <class T> void OP_ProfiledNewScObjArray_NoProfile(const unaligned OpLayoutDynamicProfile2<T>* playout) { OP_NewScObjArray_Impl<T, false>(playout); }
-        template <class T> void OP_ProfiledNewScObjArraySpread(const unaligned OpLayoutDynamicProfile2<T>* playout) { OP_NewScObjArray_Impl<T, true>(playout, m_reader.ReadAuxArray<uint32>(playout->SpreadAuxOffset, this->GetFunctionBody())); }
-        template <class T> void OP_ProfiledNewScObjArraySpread_NoProfile(const unaligned OpLayoutDynamicProfile2<T>* playout) { OP_NewScObjArray_Impl<T, true>(playout, m_reader.ReadAuxArray<uint32>(playout->SpreadAuxOffset, this->GetFunctionBody())); }
+        template <class T> void OP_ProfiledNewScObject(const unaligned OpLayoutDynamicProfile<T>* playout) { OP_ProfiledNewScObject_Impl<T, true, false>(playout); }
+        template <class T> void OP_ProfiledNewScObjectSpread(const unaligned OpLayoutDynamicProfile<T>* playout) { OP_ProfiledNewScObject_Impl<T, true, false>(playout, Js::Constants::NoInlineCacheIndex, m_reader.ReadAuxArray<uint32>(playout->SpreadAuxOffset, this->GetFunctionBody())); }
+        template <class T> void OP_ProfiledNewScObjectWithICIndex(const unaligned OpLayoutDynamicProfile<T>* playout) { OP_ProfiledNewScObject_Impl<T, true, true>(playout, playout->inlineCacheIndex); }
+        template <class T> void OP_ProfiledNewScObjArray(const unaligned OpLayoutDynamicProfile2<T>* playout) { OP_ProfiledNewScObjArray_Impl<T, true>(playout); }
+        template <class T> void OP_ProfiledNewScObjArray_NoProfile(const unaligned OpLayoutDynamicProfile2<T>* playout) { OP_ProfiledNewScObjArray_Impl<T, false>(playout); }
+        template <class T> void OP_ProfiledNewScObjArraySpread(const unaligned OpLayoutDynamicProfile2<T>* playout) { OP_ProfiledNewScObjArray_Impl<T, true>(playout, m_reader.ReadAuxArray<uint32>(playout->SpreadAuxOffset, this->GetFunctionBody())); }
+        template <class T> void OP_ProfiledNewScObjArraySpread_NoProfile(const unaligned OpLayoutDynamicProfile2<T>* playout) { OP_ProfiledNewScObjArray_Impl<T, false>(playout, m_reader.ReadAuxArray<uint32>(playout->SpreadAuxOffset, this->GetFunctionBody())); }
         Var NewScObject_Helper(Var target, ArgSlot ArgCount, const Js::AuxArray<uint32> *spreadIndices = nullptr);
         Var ProfiledNewScObject_Helper(Var target, ArgSlot ArgCount, ProfileId profileId, InlineCacheIndex inlineCacheIndex, const Js::AuxArray<uint32> *spreadIndices = nullptr);
         template <class T, bool Profiled, bool ICIndex> Var OP_NewScObjectNoArg_Impl(const unaligned T *playout, InlineCacheIndex inlineCacheIndex = Js::Constants::NoInlineCacheIndex);
@@ -764,7 +792,10 @@ namespace Js
         void OP_ResumeFinally(const byte* ip, Js::JumpOffset jumpOffset, RegSlot exceptionRegSlot, RegSlot offsetRegSlot);
         inline Var OP_ResumeYield(Var yieldDataVar, RegSlot yieldStarIterator = Js::Constants::NoRegister);
         template <typename T> void OP_IsInst(const unaligned T * playout);
-        template <class T> void OP_InitClass(const unaligned OpLayoutT_Class<T> * playout);
+        Var OP_InitBaseClass(FrameDisplay *environment, FunctionInfoPtrPtr infoRef, RegSlot protoReg);
+        Var OP_InitClass(FrameDisplay *environment, FunctionInfoPtrPtr infoRef, Var ctorParent, Var protoParent, RegSlot protoReg);
+        Var InitClassHelper(FrameDisplay *environment, FunctionInfoPtrPtr infoRef, RecyclableObject *protoParent, RecyclableObject *constructorParent, RegSlot protoReg);
+        bool OP_CheckExtends(RegSlot ctorParent, RegSlot protoParent, RegSlot extends);
         inline Var OP_LdHomeObj(ScriptContext * scriptContext);
         inline Var OP_LdFuncObj(ScriptContext * scriptContext);
         template <typename T> void OP_LdElementUndefined(const unaligned OpLayoutT_ElementU<T>* playout);

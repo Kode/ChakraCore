@@ -7,15 +7,14 @@
 namespace Js
 {
     JavascriptPromise::JavascriptPromise(DynamicType * type)
-        : DynamicObject(type)
+        : DynamicObject(type),
+        isHandled(false),
+        status(PromiseStatus::PromiseStatusCode_Undefined),
+        result(nullptr),
+        reactions(nullptr)
+
     {
         Assert(type->GetTypeId() == TypeIds_Promise);
-
-        this->status = PromiseStatusCode_Undefined;
-        this->isHandled = false;
-        this->result = nullptr;
-        this->resolveReactions = nullptr;
-        this->rejectReactions = nullptr;
     }
 
     // Promise() as defined by ES 2016 Sections 25.4.3.1
@@ -48,13 +47,13 @@ namespace Js
         {
             JavascriptError::ThrowTypeError(scriptContext, JSERR_FunctionArgument_NeedFunction, _u("Promise"));
         }
-        RecyclableObject* executor = RecyclableObject::FromVar(args[1]);
+        RecyclableObject* executor = VarTo<RecyclableObject>(args[1]);
 
         // 3. Let promise be ? OrdinaryCreateFromConstructor(NewTarget, "%PromisePrototype%", <<[[PromiseState]], [[PromiseResult]], [[PromiseFulfillReactions]], [[PromiseRejectReactions]], [[PromiseIsHandled]] >>).
         JavascriptPromise* promise = library->CreatePromise();
         if (isCtorSuperCall)
         {
-            JavascriptOperators::OrdinaryCreateFromConstructor(RecyclableObject::FromVar(newTarget), promise, library->GetPromisePrototype(), scriptContext);
+            JavascriptOperators::OrdinaryCreateFromConstructor(VarTo<RecyclableObject>(newTarget), promise, library->GetPromisePrototype(), scriptContext);
         }
 
         JavascriptPromiseResolveOrRejectFunction* resolve;
@@ -72,11 +71,15 @@ namespace Js
         // 9. Let completion be Call(executor, undefined, << resolvingFunctions.[[Resolve]], resolvingFunctions.[[Reject]] >>).
         try
         {
-            CALL_FUNCTION(scriptContext->GetThreadContext(),
-                executor, CallInfo(CallFlags_Value, 3),
-                library->GetUndefined(),
-                resolve,
-                reject);
+            BEGIN_SAFE_REENTRANT_CALL(scriptContext->GetThreadContext())
+            {
+                CALL_FUNCTION(scriptContext->GetThreadContext(),
+                        executor, CallInfo(CallFlags_Value, 3),
+                        library->GetUndefined(),
+                        resolve,
+                        reject);
+            }
+            END_SAFE_REENTRANT_CALL
         }
         catch (const JavascriptException& err)
         {
@@ -96,42 +99,22 @@ namespace Js
 
     void JavascriptPromise::InitializePromise(JavascriptPromise* promise, JavascriptPromiseResolveOrRejectFunction** resolve, JavascriptPromiseResolveOrRejectFunction** reject, ScriptContext* scriptContext)
     {
-        Assert(promise->status == PromiseStatusCode_Undefined);
+        Assert(promise->GetStatus() == PromiseStatusCode_Undefined);
         Assert(resolve);
         Assert(reject);
 
         Recycler* recycler = scriptContext->GetRecycler();
         JavascriptLibrary* library = scriptContext->GetLibrary();
 
-        promise->status = PromiseStatusCode_Unresolved;
+        promise->SetStatus(PromiseStatusCode_Unresolved);
 
-        promise->resolveReactions = RecyclerNew(recycler, JavascriptPromiseReactionList, recycler);
-        promise->rejectReactions = RecyclerNew(recycler, JavascriptPromiseReactionList, recycler);
+        promise->reactions = RecyclerNew(recycler, JavascriptPromiseReactionList, recycler);
 
         JavascriptPromiseResolveOrRejectFunctionAlreadyResolvedWrapper* alreadyResolvedRecord = RecyclerNewStructZ(scriptContext->GetRecycler(), JavascriptPromiseResolveOrRejectFunctionAlreadyResolvedWrapper);
         alreadyResolvedRecord->alreadyResolved = false;
 
         *resolve = library->CreatePromiseResolveOrRejectFunction(EntryResolveOrRejectFunction, promise, false, alreadyResolvedRecord);
         *reject = library->CreatePromiseResolveOrRejectFunction(EntryResolveOrRejectFunction, promise, true, alreadyResolvedRecord);
-    }
-
-    bool JavascriptPromise::Is(Var aValue)
-    {
-        return Js::JavascriptOperators::GetTypeId(aValue) == TypeIds_Promise;
-    }
-
-    JavascriptPromise* JavascriptPromise::FromVar(Js::Var aValue)
-    {
-        AssertOrFailFastMsg(Is(aValue), "Ensure var is actually a 'JavascriptPromise'");
-
-        return static_cast<JavascriptPromise *>(aValue);
-    }
-
-    JavascriptPromise* JavascriptPromise::UnsafeFromVar(Js::Var aValue)
-    {
-        AssertMsg(Is(aValue), "Ensure var is actually a 'JavascriptPromise'");
-
-        return static_cast<JavascriptPromise *>(aValue);
     }
 
     BOOL JavascriptPromise::GetDiagValueString(StringBuilder<ArenaAllocator>* stringBuilder, ScriptContext* requestContext)
@@ -147,14 +130,9 @@ namespace Js
         return TRUE;
     }
 
-    JavascriptPromiseReactionList* JavascriptPromise::GetResolveReactions()
+    JavascriptPromiseReactionList* JavascriptPromise::GetReactions()
     {
-        return this->resolveReactions;
-    }
-
-    JavascriptPromiseReactionList* JavascriptPromise::GetRejectReactions()
-    {
-        return this->rejectReactions;
+        return this->reactions;
     }
 
     // Promise.all as described in ES 2015 Section 25.4.4.1
@@ -195,7 +173,7 @@ namespace Js
         // We know that constructor is an object at this point - further, we even know that it is a constructor - because NewPromiseCapability
         // would throw otherwise. That means we can safely cast constructor into a RecyclableObject* now and avoid having to perform ToObject
         // as part of the Invoke operation performed inside the loop below.
-        RecyclableObject* constructorObject = RecyclableObject::FromVar(constructor);
+        RecyclableObject* constructorObject = VarTo<RecyclableObject>(constructor);
 
         uint32 index = 0;
         JavascriptArray* values = nullptr;
@@ -212,23 +190,28 @@ namespace Js
         {
             // 4. Let iterator be GetIterator(iterable).
             RecyclableObject* iterator = JavascriptOperators::GetIterator(iterable, scriptContext);
+
+            Var resolveVar = JavascriptOperators::GetProperty(constructorObject, Js::PropertyIds::resolve, scriptContext);
+            if (!JavascriptConversion::IsCallable(resolveVar))
+            {
+                JavascriptError::ThrowTypeError(scriptContext, JSERR_NeedFunction);
+            }
+
+            RecyclableObject* resolveFunc = VarTo<RecyclableObject>(resolveVar);
             values = library->CreateArray(0);
 
             JavascriptOperators::DoIteratorStepAndValue(iterator, scriptContext, [&](Var next)
             {
-                Var resolveVar = JavascriptOperators::GetProperty(constructorObject, Js::PropertyIds::resolve, scriptContext);
-
-                if (!JavascriptConversion::IsCallable(resolveVar))
+                ThreadContext * threadContext = scriptContext->GetThreadContext();
+                Var nextPromise = nullptr;
+                BEGIN_SAFE_REENTRANT_CALL(threadContext)
                 {
-                    JavascriptError::ThrowTypeError(scriptContext, JSERR_NeedFunction);
+                    nextPromise = CALL_FUNCTION(threadContext,
+                                        resolveFunc, Js::CallInfo(CallFlags_Value, 2),
+                                        constructorObject,
+                                        next);
                 }
-
-                RecyclableObject* resolveFunc = RecyclableObject::FromVar(resolveVar);
-
-                Var nextPromise = CALL_FUNCTION(scriptContext->GetThreadContext(),
-                    resolveFunc, Js::CallInfo(CallFlags_Value, 2),
-                    constructorObject,
-                    next);
+                END_SAFE_REENTRANT_CALL
 
                 JavascriptPromiseAllResolveElementFunction* resolveElement = library->CreatePromiseAllResolveElementFunction(EntryAllResolveElementFunction, index, values, promiseCapability, remainingElementsWrapper);
 
@@ -248,16 +231,28 @@ namespace Js
                     JavascriptError::ThrowTypeError(scriptContext, JSERR_NeedFunction);
                 }
 
-                RecyclableObject* thenFunc = RecyclableObject::FromVar(thenVar);
+                RecyclableObject* thenFunc = VarTo<RecyclableObject>(thenVar);
 
-                CALL_FUNCTION(scriptContext->GetThreadContext(),
-                    thenFunc, Js::CallInfo(CallFlags_Value, 3),
-                    nextPromiseObject,
-                    resolveElement,
-                    promiseCapability->GetReject());
+                BEGIN_SAFE_REENTRANT_CALL(threadContext)
+                {
+                    CALL_FUNCTION(scriptContext->GetThreadContext(),
+                        thenFunc, Js::CallInfo(CallFlags_Value, 3),
+                        nextPromiseObject,
+                        resolveElement,
+                        promiseCapability->GetReject());
+                }
+                END_SAFE_REENTRANT_CALL
 
                 index++;
             });
+
+            remainingElementsWrapper->remainingElements--;
+            if (remainingElementsWrapper->remainingElements == 0)
+            {
+                Assert(values != nullptr);
+
+                TryCallResolveOrRejectHandler(promiseCapability->GetResolve(), values, scriptContext);
+            }
         }
         catch (const JavascriptException& err)
         {
@@ -267,20 +262,141 @@ namespace Js
         if (exception != nullptr)
         {
             TryRejectWithExceptionObject(exception, promiseCapability->GetReject(), scriptContext);
-
-            // We need to explicitly return here to make sure we don't resolve in case index == 0 here.
-            // That would happen if GetIterator or IteratorValue throws an exception in the first iteration.
-            return promiseCapability->GetPromise();
         }
 
-        remainingElementsWrapper->remainingElements--;
+        return promiseCapability->GetPromise();
+    }
 
-        // We want this call to happen outside the try statement because if it throws, we aren't supposed to reject the promise.
-        if (remainingElementsWrapper->remainingElements == 0)
+    Var JavascriptPromise::EntryAllSettled(RecyclableObject* function, CallInfo callInfo, ...)
+    {
+        PROBE_STACK(function->GetScriptContext(), Js::Constants::MinStackDefault);
+        ARGUMENTS(args, callInfo);
+        Assert(!(callInfo.Flags & CallFlags_New));
+
+        ScriptContext* scriptContext = function->GetScriptContext();
+
+        AUTO_TAG_NATIVE_LIBRARY_ENTRY(function, callInfo, _u("Promise.allSettled"));
+
+        // 1. Let C be the this value.
+        Var constructor = args[0];
+
+        // 2. If Type(C) is not Object, throw a TypeError exception.
+        if (!JavascriptOperators::IsObject(constructor))
         {
-            Assert(values != nullptr);
+            JavascriptError::ThrowTypeError(scriptContext, JSERR_This_NeedObject, _u("Promise.allSettled"));
+        }
 
-            TryCallResolveOrRejectHandler(promiseCapability->GetResolve(), values, scriptContext);
+        JavascriptLibrary* library = scriptContext->GetLibrary();
+        Var iterable;
+
+        if (args.Info.Count > 1)
+        {
+            iterable = args[1];
+        }
+        else
+        {
+            iterable = library->GetUndefined();
+        }
+
+        // 3. Let promiseCapability be NewPromiseCapability(C).
+        JavascriptPromiseCapability* promiseCapability = NewPromiseCapability(constructor, scriptContext);
+
+        // We know that constructor is an object at this point - further, we even know that it is a constructor - because NewPromiseCapability
+        // would throw otherwise. That means we can safely cast constructor into a RecyclableObject* now and avoid having to perform ToObject
+        // as part of the Invoke operation performed inside the loop below.
+        RecyclableObject* constructorObject = VarTo<RecyclableObject>(constructor);
+
+        uint32 index = 0;
+        JavascriptArray* values = nullptr;
+
+        // We can't use a simple counter for the remaining element count since each Promise.all Resolve Element Function needs to know how many
+        // elements are remaining when it runs and needs to update that counter for all other functions created by this call to Promise.all.
+        // We can't just use a static variable, either, since this element count is only used for the Promise.all Resolve Element Functions created
+        // by this call to Promise.all.
+        JavascriptPromiseAllResolveElementFunctionRemainingElementsWrapper* remainingElementsWrapper = RecyclerNewStructZ(scriptContext->GetRecycler(), JavascriptPromiseAllResolveElementFunctionRemainingElementsWrapper);
+        remainingElementsWrapper->remainingElements = 1;
+
+        JavascriptExceptionObject* exception = nullptr;
+        try
+        {
+            // 4. Let iterator be GetIterator(iterable).
+            RecyclableObject* iterator = JavascriptOperators::GetIterator(iterable, scriptContext);
+
+            // Abstract operation PerformPromiseAllSettled
+            Var resolveVar = JavascriptOperators::GetProperty(constructorObject, Js::PropertyIds::resolve, scriptContext);
+            if (!JavascriptConversion::IsCallable(resolveVar))
+            {
+                JavascriptError::ThrowTypeError(scriptContext, JSERR_NeedFunction);
+            }
+
+            RecyclableObject* resolveFunc = VarTo<RecyclableObject>(resolveVar);
+            values = library->CreateArray(0);
+
+            JavascriptOperators::DoIteratorStepAndValue(iterator, scriptContext, [&](Var next)
+            {
+                ThreadContext* threadContext = scriptContext->GetThreadContext();
+                Var nextPromise = nullptr;
+                BEGIN_SAFE_REENTRANT_CALL(threadContext)
+                {
+                    nextPromise = CALL_FUNCTION(threadContext,
+                        resolveFunc, Js::CallInfo(CallFlags_Value, 2),
+                        constructorObject,
+                        next);
+                }
+                END_SAFE_REENTRANT_CALL
+
+                JavascriptPromiseResolveOrRejectFunctionAlreadyResolvedWrapper* alreadyCalledWrapper = RecyclerNewStructZ(scriptContext->GetRecycler(), JavascriptPromiseResolveOrRejectFunctionAlreadyResolvedWrapper);
+                alreadyCalledWrapper->alreadyResolved = false;
+                Var resolveElement = library->CreatePromiseAllSettledResolveOrRejectElementFunction(EntryAllSettledResolveOrRejectElementFunction, index, values, promiseCapability, remainingElementsWrapper, alreadyCalledWrapper, false);
+                Var rejectElement = library->CreatePromiseAllSettledResolveOrRejectElementFunction(EntryAllSettledResolveOrRejectElementFunction, index, values, promiseCapability, remainingElementsWrapper, alreadyCalledWrapper, true);
+
+                remainingElementsWrapper->remainingElements++;
+
+                RecyclableObject* nextPromiseObject;
+
+                if (!JavascriptConversion::ToObject(nextPromise, scriptContext, &nextPromiseObject))
+                {
+                    JavascriptError::ThrowTypeError(scriptContext, JSERR_NeedObject);
+                }
+
+                Var thenVar = JavascriptOperators::GetProperty(nextPromiseObject, Js::PropertyIds::then, scriptContext);
+
+                if (!JavascriptConversion::IsCallable(thenVar))
+                {
+                    JavascriptError::ThrowTypeError(scriptContext, JSERR_NeedFunction);
+                }
+
+                RecyclableObject* thenFunc = VarTo<RecyclableObject>(thenVar);
+
+                BEGIN_SAFE_REENTRANT_CALL(threadContext)
+                {
+                    CALL_FUNCTION(scriptContext->GetThreadContext(),
+                        thenFunc, Js::CallInfo(CallFlags_Value, 3),
+                        nextPromiseObject,
+                        resolveElement,
+                        rejectElement);
+                }
+                END_SAFE_REENTRANT_CALL
+
+                index++;
+            });
+
+            remainingElementsWrapper->remainingElements--;
+            if (remainingElementsWrapper->remainingElements == 0)
+            {
+                Assert(values != nullptr);
+
+                TryCallResolveOrRejectHandler(promiseCapability->GetResolve(), values, scriptContext);
+            }
+        }
+        catch (const JavascriptException& err)
+        {
+            exception = err.GetAndClear();
+        }
+
+        if (exception != nullptr)
+        {
+            TryRejectWithExceptionObject(exception, promiseCapability->GetReject(), scriptContext);
         }
 
         return promiseCapability->GetPromise();
@@ -323,13 +439,17 @@ namespace Js
             onRejected = undefinedVar;
         }
 
-        RecyclableObject* func = RecyclableObject::FromVar(funcVar);
+        RecyclableObject* func = VarTo<RecyclableObject>(funcVar);
 
-        return CALL_FUNCTION(scriptContext->GetThreadContext(),
-            func, Js::CallInfo(CallFlags_Value, 3),
-            promise,
-            undefinedVar,
-            onRejected);
+        BEGIN_SAFE_REENTRANT_CALL(scriptContext->GetThreadContext())
+        {
+            return CALL_FUNCTION(scriptContext->GetThreadContext(),
+                    func, Js::CallInfo(CallFlags_Value, 3),
+                    promise,
+                    undefinedVar,
+                    onRejected);
+        }
+        END_SAFE_REENTRANT_CALL
     }
 
     // Promise.race as described in ES 2015 Section 25.4.4.3
@@ -370,7 +490,7 @@ namespace Js
         // We know that constructor is an object at this point - further, we even know that it is a constructor - because NewPromiseCapability
         // would throw otherwise. That means we can safely cast constructor into a RecyclableObject* now and avoid having to perform ToObject
         // as part of the Invoke operation performed inside the loop below.
-        RecyclableObject* constructorObject = RecyclableObject::FromVar(constructor);
+        RecyclableObject* constructorObject = VarTo<RecyclableObject>(constructor);
         JavascriptExceptionObject* exception = nullptr;
 
         try
@@ -378,21 +498,26 @@ namespace Js
             // 4. Let iterator be GetIterator(iterable).
             RecyclableObject* iterator = JavascriptOperators::GetIterator(iterable, scriptContext);
 
+            Var resolveVar = JavascriptOperators::GetProperty(constructorObject, Js::PropertyIds::resolve, scriptContext);
+            if (!JavascriptConversion::IsCallable(resolveVar))
+            {
+                JavascriptError::ThrowTypeError(scriptContext, JSERR_NeedFunction);
+            }
+
+            RecyclableObject* resolveFunc = VarTo<RecyclableObject>(resolveVar);
+
             JavascriptOperators::DoIteratorStepAndValue(iterator, scriptContext, [&](Var next)
             {
-                Var resolveVar = JavascriptOperators::GetProperty(constructorObject, Js::PropertyIds::resolve, scriptContext);
-
-                if (!JavascriptConversion::IsCallable(resolveVar))
+                ThreadContext * threadContext = scriptContext->GetThreadContext();
+                Var nextPromise = nullptr;
+                BEGIN_SAFE_REENTRANT_CALL(threadContext)
                 {
-                    JavascriptError::ThrowTypeError(scriptContext, JSERR_NeedFunction);
+                    nextPromise = CALL_FUNCTION(threadContext,
+                                    resolveFunc, Js::CallInfo(CallFlags_Value, 2),
+                                    constructorObject,
+                                    next);
                 }
-
-                RecyclableObject* resolveFunc = RecyclableObject::FromVar(resolveVar);
-
-                Var nextPromise = CALL_FUNCTION(scriptContext->GetThreadContext(),
-                    resolveFunc, Js::CallInfo(CallFlags_Value, 2),
-                    constructorObject,
-                    next);
+                END_SAFE_REENTRANT_CALL
 
                 RecyclableObject* nextPromiseObject;
 
@@ -408,13 +533,17 @@ namespace Js
                     JavascriptError::ThrowTypeError(scriptContext, JSERR_NeedFunction);
                 }
 
-                RecyclableObject* thenFunc = RecyclableObject::FromVar(thenVar);
+                RecyclableObject* thenFunc = VarTo<RecyclableObject>(thenVar);
 
-                CALL_FUNCTION(scriptContext->GetThreadContext(),
-                    thenFunc, Js::CallInfo(CallFlags_Value, 3),
-                    nextPromiseObject,
-                    promiseCapability->GetResolve(),
-                    promiseCapability->GetReject());
+                BEGIN_SAFE_REENTRANT_CALL(threadContext)
+                {
+                    CALL_FUNCTION(threadContext,
+                        thenFunc, Js::CallInfo(CallFlags_Value, 3),
+                        nextPromiseObject,
+                        promiseCapability->GetResolve(),
+                        promiseCapability->GetReject());
+                }
+                END_SAFE_REENTRANT_CALL
 
             });
         }
@@ -499,23 +628,34 @@ namespace Js
             x = scriptContext->GetLibrary()->GetUndefined();
         }
 
-        // 3. If IsPromise(x) is true,
-        if (JavascriptPromise::Is(x))
-        {
-            // a. Let xConstructor be Get(x, "constructor").
-            Var xConstructor = JavascriptOperators::GetProperty((RecyclableObject*)x, PropertyIds::constructor, scriptContext);
+        return PromiseResolve(constructor, x, scriptContext);
+    }
 
-            // b. If SameValue(xConstructor, C) is true, return x.
-            if (JavascriptConversion::SameValue(xConstructor, constructor))
+    JavascriptPromise* JavascriptPromise::InternalPromiseResolve(Var value, ScriptContext* scriptContext)
+    {
+        Var constructor = scriptContext->GetLibrary()->GetPromiseConstructor();
+        Var promise = PromiseResolve(constructor, value, scriptContext);
+        return UnsafeVarTo<JavascriptPromise>(promise);
+    }
+
+    Var JavascriptPromise::PromiseResolve(Var constructor, Var value, ScriptContext* scriptContext)
+    {
+        if (VarIs<JavascriptPromise>(value))
+        {
+            Var valueConstructor = JavascriptOperators::GetProperty(
+                (RecyclableObject*)value,
+                PropertyIds::constructor,
+                scriptContext);
+
+            // If `value` is a Promise or Promise subclass instance and its "constructor"
+            // property is `constructor`, then return the value unchanged
+            if (JavascriptConversion::SameValue(valueConstructor, constructor))
             {
-                return x;
+                return value;
             }
         }
 
-        // 4. Let promiseCapability be NewPromiseCapability(C).
-        // 5. Perform ? Call(promiseCapability.[[Resolve]], undefined, << x >>).
-        // 6. Return promiseCapability.[[Promise]].
-        return CreateResolvedPromise(x, scriptContext, constructor);
+        return CreateResolvedPromise(value, scriptContext, constructor);
     }
 
     // Promise.prototype.then as described in ES 2015 Section 25.4.5.3
@@ -529,19 +669,19 @@ namespace Js
 
         AUTO_TAG_NATIVE_LIBRARY_ENTRY(function, callInfo, _u("Promise.prototype.then"));
 
-        if (args.Info.Count < 1 || !JavascriptPromise::Is(args[0]))
+        if (args.Info.Count < 1 || !VarIs<JavascriptPromise>(args[0]))
         {
             JavascriptError::ThrowTypeError(scriptContext, JSERR_This_NeedPromise, _u("Promise.prototype.then"));
         }
 
         JavascriptLibrary* library = scriptContext->GetLibrary();
-        JavascriptPromise* promise = JavascriptPromise::FromVar(args[0]);
+        JavascriptPromise* promise = VarTo<JavascriptPromise>(args[0]);
         RecyclableObject* rejectionHandler;
         RecyclableObject* fulfillmentHandler;
 
         if (args.Info.Count > 1 && JavascriptConversion::IsCallable(args[1]))
         {
-            fulfillmentHandler = RecyclableObject::FromVar(args[1]);
+            fulfillmentHandler = VarTo<RecyclableObject>(args[1]);
         }
         else
         {
@@ -550,7 +690,7 @@ namespace Js
 
         if (args.Info.Count > 2 && JavascriptConversion::IsCallable(args[2]))
         {
-            rejectionHandler = RecyclableObject::FromVar(args[2]);
+            rejectionHandler = VarTo<RecyclableObject>(args[2]);
         }
         else
         {
@@ -578,7 +718,7 @@ namespace Js
         }
 
         JavascriptLibrary* library = scriptContext->GetLibrary();
-        RecyclableObject* promise = RecyclableObject::UnsafeFromVar(args[0]);
+        RecyclableObject* promise = UnsafeVarTo<RecyclableObject>(args[0]);
         // 3. Let C be ? SpeciesConstructor(promise, %Promise%).
         RecyclableObject* constructor = JavascriptOperators::SpeciesConstructor(promise, scriptContext->GetLibrary()->GetPromiseConstructor(), scriptContext);
         // 4. Assert IsConstructor(C)
@@ -586,7 +726,7 @@ namespace Js
 
         // 5. If IsCallable(onFinally) is false
         //   a. Let thenFinally be onFinally
-        //   b. Let catchFinally be onFinally 
+        //   b. Let catchFinally be onFinally
         // 6. Else,
         //   a. Let thenFinally be a new built-in function object as defined in ThenFinally Function.
         //   b. Let catchFinally be a new built-in function object as defined in CatchFinally Function.
@@ -601,8 +741,8 @@ namespace Js
             if (JavascriptConversion::IsCallable(args[1]))
             {
                 //note to avoid duplicating code the ThenFinallyFunction works as both thenFinally and catchFinally using a flag
-                thenFinally = library->CreatePromiseThenFinallyFunction(EntryThenFinallyFunction, RecyclableObject::FromVar(args[1]), constructor, false);
-                catchFinally = library->CreatePromiseThenFinallyFunction(EntryThenFinallyFunction, RecyclableObject::FromVar(args[1]), constructor, true);
+                thenFinally = library->CreatePromiseThenFinallyFunction(EntryThenFinallyFunction, VarTo<RecyclableObject>(args[1]), constructor, false);
+                catchFinally = library->CreatePromiseThenFinallyFunction(EntryThenFinallyFunction, VarTo<RecyclableObject>(args[1]), constructor, true);
             }
             else
             {
@@ -624,13 +764,17 @@ namespace Js
         {
             JavascriptError::ThrowTypeError(scriptContext, JSERR_FunctionArgument_NeedFunction, _u("Promise.prototype.finally"));
         }
-        RecyclableObject* func = RecyclableObject::UnsafeFromVar(funcVar);
+        RecyclableObject* func = UnsafeVarTo<RecyclableObject>(funcVar);
 
-        return CALL_FUNCTION(scriptContext->GetThreadContext(),
-            func, Js::CallInfo(CallFlags_Value, 3),
-            promise,
-            thenFinally,
-            catchFinally);
+        BEGIN_SAFE_REENTRANT_CALL(scriptContext->GetThreadContext())
+        {
+            return CALL_FUNCTION(scriptContext->GetThreadContext(),
+                func, Js::CallInfo(CallFlags_Value, 3),
+                promise,
+                thenFinally,
+                catchFinally);
+        }
+        END_SAFE_REENTRANT_CALL
     }
 
     // ThenFinallyFunction as described in draft ES2018 #sec-thenfinallyfunctions
@@ -641,17 +785,25 @@ namespace Js
         ARGUMENTS(args, callInfo);
         Assert(!(callInfo.Flags & CallFlags_New));
         ScriptContext* scriptContext = function->GetScriptContext();
-        
+
         JavascriptLibrary* library = scriptContext->GetLibrary();
 
-        JavascriptPromiseThenFinallyFunction* thenFinallyFunction = JavascriptPromiseThenFinallyFunction::FromVar(function);
+        JavascriptPromiseThenFinallyFunction* thenFinallyFunction = VarTo<JavascriptPromiseThenFinallyFunction>(function);
 
         // 1. Let onFinally be F.[[OnFinally]]
         // 2. Assert: IsCallable(onFinally)=true
         Assert(JavascriptConversion::IsCallable(thenFinallyFunction->GetOnFinally()));
 
         // 3. Let result be ? Call(onFinally, undefined)
-        Var result = CALL_FUNCTION(scriptContext->GetThreadContext(), thenFinallyFunction->GetOnFinally(), CallInfo(CallFlags_Value, 1), library->GetUndefined());
+        Var result = nullptr;
+
+        BEGIN_SAFE_REENTRANT_CALL(scriptContext->GetThreadContext())
+        {
+            result = CALL_FUNCTION(scriptContext->GetThreadContext(), thenFinallyFunction->GetOnFinally(), CallInfo(CallFlags_Value, 1), library->GetUndefined());
+        }
+        END_SAFE_REENTRANT_CALL
+
+        Assert(result);
 
         // 4. Let C be F.[[Constructor]]
         // 5. Assert IsConstructor(C)
@@ -685,12 +837,16 @@ namespace Js
             JavascriptError::ThrowTypeError(scriptContext, JSERR_FunctionArgument_NeedFunction, _u("Promise.prototype.finally"));
         }
 
-        RecyclableObject* func = RecyclableObject::FromVar(funcVar);
+        RecyclableObject* func = VarTo<RecyclableObject>(funcVar);
 
-        return CALL_FUNCTION(scriptContext->GetThreadContext(),
-            func, Js::CallInfo(CallFlags_Value, 2),
-            promiseVar,
-            thunkFinallyFunction);
+        BEGIN_SAFE_REENTRANT_CALL(scriptContext->GetThreadContext())
+        {
+            return CALL_FUNCTION(scriptContext->GetThreadContext(),
+                func, Js::CallInfo(CallFlags_Value, 2),
+                promiseVar,
+                thunkFinallyFunction);
+        }
+        END_SAFE_REENTRANT_CALL
     }
 
     // valueThunk Function as referenced within draft ES2018 #sec-thenfinallyfunctions
@@ -701,11 +857,11 @@ namespace Js
         ARGUMENTS(args, callInfo);
         Assert(!(callInfo.Flags & CallFlags_New));
 
-        JavascriptPromiseThunkFinallyFunction* thunkFinallyFunction = JavascriptPromiseThunkFinallyFunction::FromVar(function);
+        JavascriptPromiseThunkFinallyFunction* thunkFinallyFunction = VarTo<JavascriptPromiseThunkFinallyFunction>(function);
 
         if (!thunkFinallyFunction->GetShouldThrow())
         {
-            return thunkFinallyFunction->GetValue();  
+            return thunkFinallyFunction->GetValue();
         }
         else
         {
@@ -734,7 +890,7 @@ namespace Js
             resolution = undefinedVar;
         }
 
-        JavascriptPromiseResolveOrRejectFunction* resolveOrRejectFunction = JavascriptPromiseResolveOrRejectFunction::FromVar(function);
+        JavascriptPromiseResolveOrRejectFunction* resolveOrRejectFunction = VarTo<JavascriptPromiseResolveOrRejectFunction>(function);
 
         if (resolveOrRejectFunction->IsAlreadyResolved())
         {
@@ -776,16 +932,16 @@ namespace Js
                 resolution = selfResolutionError;
                 isRejecting = true;
             }
-            else if (RecyclableObject::Is(resolution))
+            else if (VarIs<RecyclableObject>(resolution))
             {
                 try
                 {
-                    RecyclableObject* thenable = RecyclableObject::FromVar(resolution);
+                    RecyclableObject* thenable = VarTo<RecyclableObject>(resolution);
                     Var then = JavascriptOperators::GetPropertyNoCache(thenable, Js::PropertyIds::then, scriptContext);
 
                     if (JavascriptConversion::IsCallable(then))
                     {
-                        JavascriptPromiseResolveThenableTaskFunction* resolveThenableTaskFunction = library->CreatePromiseResolveThenableTaskFunction(EntryResolveThenableTaskFunction, this, thenable, RecyclableObject::FromVar(then));
+                        JavascriptPromiseResolveThenableTaskFunction* resolveThenableTaskFunction = library->CreatePromiseResolveThenableTaskFunction(EntryResolveThenableTaskFunction, this, thenable, VarTo<RecyclableObject>(then));
 
                         library->EnqueueTask(resolveThenableTaskFunction);
 
@@ -806,13 +962,12 @@ namespace Js
             }
         }
 
-        JavascriptPromiseReactionList* reactions;
+
         PromiseStatus newStatus;
 
         // Need to check rejecting state again as it might have changed due to failures
         if (isRejecting)
         {
-            reactions = this->GetRejectReactions();
             newStatus = PromiseStatusCode_HasRejection;
             if (!GetIsHandled())
             {
@@ -821,18 +976,24 @@ namespace Js
         }
         else
         {
-            reactions = this->GetResolveReactions();
             newStatus = PromiseStatusCode_HasResolution;
         }
 
         Assert(resolution != nullptr);
 
-        this->result = resolution;
-        this->resolveReactions = nullptr;
-        this->rejectReactions = nullptr;
-        this->status = newStatus;
+        // SList only supports "prepend" operation, so we need to reverse the list
+        // before triggering reactions
+        JavascriptPromiseReactionList* reactions = this->GetReactions();
+        if (reactions != nullptr)
+        {
+            reactions->Reverse();
+        }
 
-        return TriggerPromiseReactions(reactions, resolution, scriptContext);
+        this->result = resolution;
+        this->reactions = nullptr;
+        this->SetStatus(newStatus);
+
+        return TriggerPromiseReactions(reactions, isRejecting, resolution, scriptContext);
     }
 
     // Promise Capabilities Executor Function as described in ES 2015 Section 25.4.1.6.2
@@ -857,7 +1018,7 @@ namespace Js
             }
         }
 
-        JavascriptPromiseCapabilitiesExecutorFunction* capabilitiesExecutorFunction = JavascriptPromiseCapabilitiesExecutorFunction::FromVar(function);
+        JavascriptPromiseCapabilitiesExecutorFunction* capabilitiesExecutorFunction = VarTo<JavascriptPromiseCapabilitiesExecutorFunction>(function);
         JavascriptPromiseCapability* promiseCapability = capabilitiesExecutorFunction->GetCapability();
 
         if (!JavascriptOperators::IsUndefined(promiseCapability->GetResolve()) || !JavascriptOperators::IsUndefined(promiseCapability->GetReject()))
@@ -881,7 +1042,7 @@ namespace Js
         ScriptContext* scriptContext = function->GetScriptContext();
         Var undefinedVar = scriptContext->GetLibrary()->GetUndefined();
 
-        JavascriptPromiseReactionTaskFunction* reactionTaskFunction = JavascriptPromiseReactionTaskFunction::FromVar(function);
+        JavascriptPromiseReactionTaskFunction* reactionTaskFunction = VarTo<JavascriptPromiseReactionTaskFunction>(function);
         JavascriptPromiseReaction* reaction = reactionTaskFunction->GetReaction();
         Var argument = reactionTaskFunction->GetArgument();
         JavascriptPromiseCapability* promiseCapability = reaction->GetCapabilities();
@@ -890,13 +1051,32 @@ namespace Js
         JavascriptExceptionObject* exception = nullptr;
 
         {
-            Js::JavascriptExceptionOperators::AutoCatchHandlerExists autoCatchHandlerExists(scriptContext);
+
+            bool isPromiseRejectionHandled = true;
+            if (scriptContext->IsScriptContextInDebugMode())
+            {
+                // only necessary to determine if false if debugger is attached.  This way we'll
+                // correctly break on exceptions raised in promises that result in uhandled rejection
+                // notifications
+                Var promiseVar = promiseCapability->GetPromise();
+                if (VarIs<JavascriptPromise>(promiseVar))
+                {
+                    JavascriptPromise* promise = VarTo<JavascriptPromise>(promiseVar);
+                    isPromiseRejectionHandled = !promise->WillRejectionBeUnhandled();
+                }
+            }
+
+            Js::JavascriptExceptionOperators::AutoCatchHandlerExists autoCatchHandlerExists(scriptContext, isPromiseRejectionHandled);
             try
             {
-                handlerResult = CALL_FUNCTION(scriptContext->GetThreadContext(),
-                    handler, Js::CallInfo(Js::CallFlags::CallFlags_Value, 2),
-                    undefinedVar,
-                    argument);
+                BEGIN_SAFE_REENTRANT_CALL(scriptContext->GetThreadContext())
+                {
+                    handlerResult = CALL_FUNCTION(scriptContext->GetThreadContext(),
+                                        handler, Js::CallInfo(Js::CallFlags::CallFlags_Value, 2),
+                                        undefinedVar,
+                                        argument);
+                }
+                END_SAFE_REENTRANT_CALL
             }
             catch (const JavascriptException& err)
             {
@@ -914,6 +1094,82 @@ namespace Js
         return TryCallResolveOrRejectHandler(promiseCapability->GetResolve(), handlerResult, scriptContext);
     }
 
+
+    /**
+     * Determine if at the current point in time, the given promise has a path of reactions that result
+     * in an unhandled rejection.  This doesn't account for potential of a rejection handler added later
+     * in time.
+     */
+    bool JavascriptPromise::WillRejectionBeUnhandled()
+    {
+        bool willBeUnhandled = !this->GetIsHandled();
+        if (!willBeUnhandled)
+        {
+            // if this promise is handled, then we need to do a depth-first search over this promise's reject
+            // reactions. If we find a reaction that
+            //    - associated promise is "unhandled" (ie, it's never been "then'd")
+            //    - AND its rejection handler is our default "thrower function"
+            // then this promise results in an unhandled rejection path.
+
+            JsUtil::Stack<JavascriptPromise*, HeapAllocator> stack(&HeapAllocator::Instance);
+            SimpleHashTable<JavascriptPromise*, int, HeapAllocator> visited(&HeapAllocator::Instance);
+            stack.Push(this);
+            visited.Add(this, 1);
+
+            while (!willBeUnhandled && !stack.Empty())
+            {
+                JavascriptPromise * curr = stack.Pop();
+                {
+                    JavascriptPromiseReactionList* reactions = curr->GetReactions();
+                    JavascriptPromiseReactionList::Iterator it = reactions->GetIterator();
+                    while (it.Next())
+                    {
+                        JavascriptPromiseReactionPair pair = it.Data();
+                        JavascriptPromiseReaction* reaction = pair.rejectReaction;
+                        Var promiseVar = reaction->GetCapabilities()->GetPromise();
+
+                        if (VarIs<JavascriptPromise>(promiseVar))
+                        {
+                            JavascriptPromise* p = VarTo<JavascriptPromise>(promiseVar);
+                            if (!p->GetIsHandled())
+                            {
+                                RecyclableObject* handler = reaction->GetHandler();
+                                if (VarIs<JavascriptFunction>(handler))
+                                {
+                                    JavascriptFunction* func = VarTo<JavascriptFunction>(handler);
+                                    FunctionInfo* functionInfo = func->GetFunctionInfo();
+
+#ifdef DEBUG
+                                    if (!func->IsCrossSiteObject())
+                                    {
+                                        // assert that Thrower function's FunctionInfo hasn't changed
+                                        AssertMsg(func->GetScriptContext()->GetLibrary()->GetThrowerFunction()->GetFunctionInfo() == &JavascriptPromise::EntryInfo::Thrower, "unexpected FunctionInfo for thrower function!");
+                                    }
+#endif
+
+                                    // If the function info is the default thrower function's function info, then assume that this is unhandled
+                                    // this will work across script contexts
+                                    if (functionInfo == &JavascriptPromise::EntryInfo::Thrower)
+                                    {
+                                        willBeUnhandled = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            AssertMsg(visited.HasEntry(p) == false, "Unexpected cycle in promise reaction tree!");
+                            if (!visited.HasEntry(p))
+                            {
+                                stack.Push(p);
+                                visited.Add(p, 1);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return willBeUnhandled;
+    }
+
     Var JavascriptPromise::TryCallResolveOrRejectHandler(Var handler, Var value, ScriptContext* scriptContext)
     {
         Var undefinedVar = scriptContext->GetLibrary()->GetUndefined();
@@ -923,12 +1179,16 @@ namespace Js
             JavascriptError::ThrowTypeError(scriptContext, JSERR_NeedFunction);
         }
 
-        RecyclableObject* handlerFunc = RecyclableObject::FromVar(handler);
+        RecyclableObject* handlerFunc = VarTo<RecyclableObject>(handler);
 
-        return CALL_FUNCTION(scriptContext->GetThreadContext(),
-            handlerFunc, CallInfo(CallFlags_Value, 2),
-            undefinedVar,
-            value);
+        BEGIN_SAFE_REENTRANT_CALL(scriptContext->GetThreadContext())
+        {
+            return CALL_FUNCTION(scriptContext->GetThreadContext(),
+                    handlerFunc, CallInfo(CallFlags_Value, 2),
+                    undefinedVar,
+                    value);
+        }
+        END_SAFE_REENTRANT_CALL
     }
 
     Var JavascriptPromise::TryRejectWithExceptionObject(JavascriptExceptionObject* exceptionObject, Var handler, ScriptContext* scriptContext)
@@ -980,36 +1240,69 @@ namespace Js
 
     Var JavascriptPromise::CreateThenPromise(JavascriptPromise* sourcePromise, RecyclableObject* fulfillmentHandler, RecyclableObject* rejectionHandler, ScriptContext* scriptContext)
     {
-        RecyclableObject* constructor = JavascriptOperators::SpeciesConstructor(sourcePromise, scriptContext->GetLibrary()->GetPromiseConstructor(), scriptContext);
-        JavascriptPromiseCapability* promiseCapability = NewPromiseCapability(constructor, scriptContext);
+        JavascriptFunction* defaultConstructor = scriptContext->GetLibrary()->GetPromiseConstructor();
+        RecyclableObject* constructor = JavascriptOperators::SpeciesConstructor(sourcePromise, defaultConstructor, scriptContext);
+        AssertOrFailFast(JavascriptOperators::IsConstructor(constructor));
 
-        JavascriptPromiseReaction* resolveReaction = JavascriptPromiseReaction::New(promiseCapability, fulfillmentHandler, scriptContext);
-        JavascriptPromiseReaction* rejectReaction = JavascriptPromiseReaction::New(promiseCapability, rejectionHandler, scriptContext);
+        bool isDefaultConstructor = constructor == defaultConstructor;
+        JavascriptPromiseCapability* promiseCapability = (JavascriptPromiseCapability*)JavascriptOperators::NewObjectCreationHelper_ReentrancySafe(constructor, isDefaultConstructor, scriptContext->GetThreadContext(), [=]()->JavascriptPromiseCapability*
+        {
+            return NewPromiseCapability(constructor, scriptContext);
+        });
 
-        switch (sourcePromise->status)
+        PerformPromiseThen(sourcePromise, promiseCapability, fulfillmentHandler, rejectionHandler, scriptContext);
+
+        return promiseCapability->GetPromise();
+    }
+
+    void JavascriptPromise::PerformPromiseThen(
+        JavascriptPromise* sourcePromise,
+        JavascriptPromiseCapability* capability,
+        RecyclableObject* fulfillmentHandler,
+        RecyclableObject* rejectionHandler,
+        ScriptContext* scriptContext)
+    {
+        auto* resolveReaction = JavascriptPromiseReaction::New(capability, fulfillmentHandler, scriptContext);
+        auto* rejectReaction = JavascriptPromiseReaction::New(capability, rejectionHandler, scriptContext);
+
+        switch (sourcePromise->GetStatus())
         {
         case PromiseStatusCode_Unresolved:
-            sourcePromise->resolveReactions->Add(resolveReaction);
-            sourcePromise->rejectReactions->Add(rejectReaction);
+            JavascriptPromiseReactionPair pair;
+            pair.resolveReaction = resolveReaction;
+            pair.rejectReaction = rejectReaction;
+            sourcePromise->reactions->Prepend(pair);
             break;
+
         case PromiseStatusCode_HasResolution:
-            EnqueuePromiseReactionTask(resolveReaction, sourcePromise->result, scriptContext);
+            EnqueuePromiseReactionTask(
+                resolveReaction, 
+                CrossSite::MarshalVar(scriptContext, sourcePromise->result),
+                scriptContext);
             break;
+
         case PromiseStatusCode_HasRejection:
+        {
             if (!sourcePromise->GetIsHandled())
             {
-                scriptContext->GetLibrary()->CallNativeHostPromiseRejectionTracker(sourcePromise, sourcePromise->result, true);
+                scriptContext->GetLibrary()->CallNativeHostPromiseRejectionTracker(
+                    sourcePromise,
+                    CrossSite::MarshalVar(scriptContext, sourcePromise->result),
+                    true);
             }
-            EnqueuePromiseReactionTask(rejectReaction, sourcePromise->result, scriptContext);
+            EnqueuePromiseReactionTask(
+                rejectReaction,
+                CrossSite::MarshalVar(scriptContext, sourcePromise->result),
+                scriptContext);
             break;
+        }
+
         default:
             AssertMsg(false, "Promise status is in an invalid state");
             break;
         }
 
         sourcePromise->SetIsHandled();
-
-        return promiseCapability->GetPromise();
     }
 
     // Promise Resolve Thenable Job as described in ES 2015 Section 25.4.2.2
@@ -1022,7 +1315,7 @@ namespace Js
         ScriptContext* scriptContext = function->GetScriptContext();
         JavascriptLibrary* library = scriptContext->GetLibrary();
 
-        JavascriptPromiseResolveThenableTaskFunction* resolveThenableTaskFunction = JavascriptPromiseResolveThenableTaskFunction::FromVar(function);
+        JavascriptPromiseResolveThenableTaskFunction* resolveThenableTaskFunction = VarTo<JavascriptPromiseResolveThenableTaskFunction>(function);
         JavascriptPromise* promise = resolveThenableTaskFunction->GetPromise();
         RecyclableObject* thenable = resolveThenableTaskFunction->GetThenable();
         RecyclableObject* thenFunction = resolveThenableTaskFunction->GetThenFunction();
@@ -1035,14 +1328,26 @@ namespace Js
         JavascriptExceptionObject* exception = nullptr;
 
         {
-            Js::JavascriptExceptionOperators::AutoCatchHandlerExists autoCatchHandlerExists(scriptContext);
+            bool isPromiseRejectionHandled = true;
+            if (scriptContext->IsScriptContextInDebugMode())
+            {
+                // only necessary to determine if false if debugger is attached.  This way we'll
+                // correctly break on exceptions raised in promises that result in uhandled rejections
+                isPromiseRejectionHandled = !promise->WillRejectionBeUnhandled();
+            }
+
+            Js::JavascriptExceptionOperators::AutoCatchHandlerExists autoCatchHandlerExists(scriptContext, isPromiseRejectionHandled);
             try
             {
-                return CALL_FUNCTION(scriptContext->GetThreadContext(),
-                    thenFunction, Js::CallInfo(Js::CallFlags::CallFlags_Value, 3),
-                    thenable,
-                    resolve,
-                    reject);
+                BEGIN_SAFE_REENTRANT_CALL(scriptContext->GetThreadContext())
+                {
+                    return CALL_FUNCTION(scriptContext->GetThreadContext(),
+                            thenFunction, Js::CallInfo(Js::CallFlags::CallFlags_Value, 3),
+                            thenable,
+                            resolve,
+                            reject);
+                }
+                END_SAFE_REENTRANT_CALL
             }
             catch (const JavascriptException& err)
             {
@@ -1118,7 +1423,7 @@ namespace Js
             x = undefinedVar;
         }
 
-        JavascriptPromiseAllResolveElementFunction* allResolveElementFunction = JavascriptPromiseAllResolveElementFunction::FromVar(function);
+        JavascriptPromiseAllResolveElementFunction* allResolveElementFunction = VarTo<JavascriptPromiseAllResolveElementFunction>(function);
 
         if (allResolveElementFunction->IsAlreadyCalled())
         {
@@ -1154,6 +1459,70 @@ namespace Js
         return undefinedVar;
     }
 
+    Var JavascriptPromise::EntryAllSettledResolveOrRejectElementFunction(RecyclableObject* function, CallInfo callInfo, ...)
+    {
+        PROBE_STACK(function->GetScriptContext(), Js::Constants::MinStackDefault);
+        ARGUMENTS(args, callInfo);
+        Assert(!(callInfo.Flags & CallFlags_New));
+
+        ScriptContext* scriptContext = function->GetScriptContext();
+        Var undefinedVar = scriptContext->GetLibrary()->GetUndefined();
+        Var x;
+
+        if (args.Info.Count > 1)
+        {
+            x = args[1];
+        }
+        else
+        {
+            x = undefinedVar;
+        }
+
+        JavascriptPromiseAllSettledResolveOrRejectElementFunction* allSettledResolveElementFunction = VarTo<JavascriptPromiseAllSettledResolveOrRejectElementFunction>(function);
+
+        if (allSettledResolveElementFunction->IsAlreadyCalled())
+        {
+            return undefinedVar;
+        }
+
+        allSettledResolveElementFunction->SetAlreadyCalled(true);
+
+        bool isRejecting = allSettledResolveElementFunction->IsRejectFunction();
+        uint32 index = allSettledResolveElementFunction->GetIndex();
+        JavascriptArray* values = allSettledResolveElementFunction->GetValues();
+        JavascriptPromiseCapability* promiseCapability = allSettledResolveElementFunction->GetCapabilities();
+        JavascriptExceptionObject* exception = nullptr;
+
+        try
+        {
+            RecyclableObject* obj = scriptContext->GetLibrary()->CreateObject();
+            Var statusString = isRejecting ?
+                scriptContext->GetPropertyString(PropertyIds::rejected) :
+                scriptContext->GetPropertyString(PropertyIds::fulfilled);
+            JavascriptOperators::SetProperty(obj, obj, PropertyIds::status, statusString, scriptContext);
+            PropertyIds valuePropId = isRejecting ? PropertyIds::reason : PropertyIds::value;
+            JavascriptOperators::SetProperty(obj, obj, valuePropId, x, scriptContext);
+
+            values->SetItem(index, obj, PropertyOperation_None);
+        }
+        catch (const JavascriptException& err)
+        {
+            exception = err.GetAndClear();
+        }
+
+        if (exception != nullptr)
+        {
+            return TryRejectWithExceptionObject(exception, promiseCapability->GetReject(), scriptContext);
+        }
+
+        if (allSettledResolveElementFunction->DecrementRemainingElements() == 0)
+        {
+            return TryCallResolveOrRejectHandler(promiseCapability->GetResolve(), values, scriptContext);
+        }
+
+        return undefinedVar;
+    }
+
     Var JavascriptPromise::EntryJavascriptPromiseAsyncSpawnExecutorFunction(RecyclableObject* function, CallInfo callInfo, ...)
     {
         PROBE_STACK(function->GetScriptContext(), Js::Constants::MinStackDefault);
@@ -1170,8 +1539,8 @@ namespace Js
         resolve = args[1];
         reject = args[2];
 
-        Assert(JavascriptPromiseAsyncSpawnExecutorFunction::Is(function));
-        JavascriptPromiseAsyncSpawnExecutorFunction* asyncSpawnExecutorFunction = JavascriptPromiseAsyncSpawnExecutorFunction::FromVar(function);
+        Assert(VarIs<JavascriptPromiseAsyncSpawnExecutorFunction>(function));
+        JavascriptPromiseAsyncSpawnExecutorFunction* asyncSpawnExecutorFunction = VarTo<JavascriptPromiseAsyncSpawnExecutorFunction>(function);
         Var self = asyncSpawnExecutorFunction->GetTarget();
 
         Var varCallArgs[] = { undefinedVar, self };
@@ -1188,20 +1557,28 @@ namespace Js
     {
         PROBE_STACK(function->GetScriptContext(), Js::Constants::MinStackDefault);
 
-        JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction* asyncSpawnStepArgumentExecutorFunction = JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction::FromVar(function);
+        JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction* asyncSpawnStepArgumentExecutorFunction = VarTo<JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction>(function);
         Var argument = asyncSpawnStepArgumentExecutorFunction->GetArgument();
 
         JavascriptFunction* next = function->GetScriptContext()->GetLibrary()->EnsureGeneratorNextFunction();
-        return CALL_FUNCTION(function->GetScriptContext()->GetThreadContext(), next, CallInfo(CallFlags_Value, 2), asyncSpawnStepArgumentExecutorFunction->GetGenerator(), argument);
+        BEGIN_SAFE_REENTRANT_CALL(function->GetScriptContext()->GetThreadContext())
+        {
+            return CALL_FUNCTION(function->GetScriptContext()->GetThreadContext(), next, CallInfo(CallFlags_Value, 2), asyncSpawnStepArgumentExecutorFunction->GetGenerator(), argument);
+        }
+        END_SAFE_REENTRANT_CALL
     }
 
     Var JavascriptPromise::EntryJavascriptPromiseAsyncSpawnStepThrowExecutorFunction(RecyclableObject* function, CallInfo callInfo, ...)
     {
         PROBE_STACK(function->GetScriptContext(), Js::Constants::MinStackDefault);
 
-        JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction* asyncSpawnStepArgumentExecutorFunction = JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction::FromVar(function);
+        JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction* asyncSpawnStepArgumentExecutorFunction = VarTo<JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction>(function);
         JavascriptFunction* throw_ = function->GetScriptContext()->GetLibrary()->EnsureGeneratorThrowFunction();
-        return CALL_FUNCTION(function->GetScriptContext()->GetThreadContext(), throw_, CallInfo(CallFlags_Value, 2), asyncSpawnStepArgumentExecutorFunction->GetGenerator(), asyncSpawnStepArgumentExecutorFunction->GetArgument());
+        BEGIN_SAFE_REENTRANT_CALL(function->GetScriptContext()->GetThreadContext())
+        {
+            return CALL_FUNCTION(function->GetScriptContext()->GetThreadContext(), throw_, CallInfo(CallFlags_Value, 2), asyncSpawnStepArgumentExecutorFunction->GetGenerator(), asyncSpawnStepArgumentExecutorFunction->GetArgument());
+        }
+        END_SAFE_REENTRANT_CALL
     }
 
     Var JavascriptPromise::EntryJavascriptPromiseAsyncSpawnCallStepExecutorFunction(RecyclableObject* function, CallInfo callInfo, ...)
@@ -1220,7 +1597,7 @@ namespace Js
             argument = args[1];
         }
 
-        JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction* asyncSpawnStepExecutorFunction = JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction::FromVar(function);
+        JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction* asyncSpawnStepExecutorFunction = VarTo<JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction>(function);
         JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction* functionArg;
         JavascriptGenerator* gen = asyncSpawnStepExecutorFunction->GetGenerator();
         Var reject = asyncSpawnStepExecutorFunction->GetReject();
@@ -1240,21 +1617,30 @@ namespace Js
         return undefinedVar;
     }
 
-    void JavascriptPromise::AsyncSpawnStep(JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction* nextFunction, JavascriptGenerator* gen, Var resolve, Var reject)
+    void JavascriptPromise::AsyncSpawnStep(
+        JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction* nextFunction,
+        JavascriptGenerator* gen,
+        Var resolve,
+        Var reject)
     {
         ScriptContext* scriptContext = gen->GetScriptContext();
+        BEGIN_SAFE_REENTRANT_REGION(scriptContext->GetThreadContext())
+
         JavascriptLibrary* library = scriptContext->GetLibrary();
         Var undefinedVar = library->GetUndefined();
 
         JavascriptExceptionObject* exception = nullptr;
-        Var value = nullptr;
         RecyclableObject* next = nullptr;
-        bool done;
 
         try
         {
-            Var nextVar = CALL_FUNCTION(scriptContext->GetThreadContext(), nextFunction, CallInfo(CallFlags_Value, 1), undefinedVar);
-            next = RecyclableObject::FromVar(nextVar);
+            Var nextVar = CALL_FUNCTION(
+                scriptContext->GetThreadContext(),
+                nextFunction,
+                CallInfo(CallFlags_Value, 1),
+                undefinedVar);
+
+            next = VarTo<RecyclableObject>(nextVar);
         }
         catch (const JavascriptException& err)
         {
@@ -1263,41 +1649,56 @@ namespace Js
 
         if (exception != nullptr)
         {
-            // finished with failure, reject the promise
+            // If the generator threw an exception, reject the promise
             TryRejectWithExceptionObject(exception, reject, scriptContext);
             return;
         }
 
         Assert(next != nullptr);
-        done = JavascriptConversion::ToBool(JavascriptOperators::GetProperty(next, PropertyIds::done, scriptContext), scriptContext);
-        if (done)
+
+        Var done = JavascriptOperators::GetProperty(next, PropertyIds::done, scriptContext);
+
+        if (JavascriptConversion::ToBool(done, scriptContext))
         {
-            // finished with success, resolve the promise
-            value = JavascriptOperators::GetProperty(next, PropertyIds::value, scriptContext);
+            // If the generator is done, resolve the promise
+            Var value = JavascriptOperators::GetProperty(next, PropertyIds::value, scriptContext);
             if (!JavascriptConversion::IsCallable(resolve))
             {
                 JavascriptError::ThrowTypeError(scriptContext, JSERR_NeedFunction);
             }
-            CALL_FUNCTION(scriptContext->GetThreadContext(), RecyclableObject::FromVar(resolve), CallInfo(CallFlags_Value, 2), undefinedVar, value);
+
+            CALL_FUNCTION(
+                scriptContext->GetThreadContext(),
+                VarTo<RecyclableObject>(resolve),
+                CallInfo(CallFlags_Value, 2),
+                undefinedVar,
+                value);
 
             return;
         }
 
-        // not finished, chain off the yielded promise and `step` again
-        JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction* successFunction = library->CreatePromiseAsyncSpawnStepArgumentExecutorFunction(EntryJavascriptPromiseAsyncSpawnCallStepExecutorFunction, gen, undefinedVar, resolve, reject);
-        JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction* failFunction = library->CreatePromiseAsyncSpawnStepArgumentExecutorFunction(EntryJavascriptPromiseAsyncSpawnCallStepExecutorFunction, gen, undefinedVar, resolve, reject, true);
+        // Chain off the yielded promise and step again
+        auto* successFunction = library->CreatePromiseAsyncSpawnStepArgumentExecutorFunction(
+            EntryJavascriptPromiseAsyncSpawnCallStepExecutorFunction,
+            gen,
+            undefinedVar,
+            resolve,
+            reject);
 
-        JavascriptFunction* promiseResolve = library->EnsurePromiseResolveFunction();
-        value = JavascriptOperators::GetProperty(next, PropertyIds::value, scriptContext);
-        Var promiseVar = CALL_FUNCTION(scriptContext->GetThreadContext(), promiseResolve, CallInfo(CallFlags_Value, 2), library->GetPromiseConstructor(), value);
-        JavascriptPromise* promise = FromVar(promiseVar);
+        auto* failFunction = library->CreatePromiseAsyncSpawnStepArgumentExecutorFunction(
+            EntryJavascriptPromiseAsyncSpawnCallStepExecutorFunction,
+            gen,
+            undefinedVar,
+            resolve,
+            reject,
+            true);
 
-        Var promiseThen = JavascriptOperators::GetProperty(promise, PropertyIds::then, scriptContext);
-        if (!JavascriptConversion::IsCallable(promiseThen))
-        {
-            JavascriptError::ThrowTypeError(scriptContext, JSERR_NeedFunction);
-        }
-        CALL_FUNCTION(scriptContext->GetThreadContext(), RecyclableObject::FromVar(promiseThen), CallInfo(CallFlags_Value, 3), promise, successFunction, failFunction);
+        Var value = JavascriptOperators::GetProperty(next, PropertyIds::value, scriptContext);
+        JavascriptPromise* promise = InternalPromiseResolve(value, scriptContext);
+        JavascriptPromiseCapability* unused = UnusedPromiseCapability(scriptContext);
+        PerformPromiseThen(promise, unused, successFunction, failFunction, scriptContext);
+
+        END_SAFE_REENTRANT_REGION
     }
 
 #if ENABLE_TTD
@@ -1308,20 +1709,12 @@ namespace Js
             extractor->MarkVisitVar(this->result);
         }
 
-        if(this->resolveReactions != nullptr)
+        if(this->reactions != nullptr)
         {
-            for(int32 i = 0; i < this->resolveReactions->Count(); ++i)
-            {
-                this->resolveReactions->Item(i)->MarkVisitPtrs(extractor);
-            }
-        }
-
-        if(this->rejectReactions != nullptr)
-        {
-            for(int32 i = 0; i < this->rejectReactions->Count(); ++i)
-            {
-                this->rejectReactions->Item(i)->MarkVisitPtrs(extractor);
-            }
+            this->reactions->Map([&](JavascriptPromiseReactionPair pair) {
+                pair.rejectReaction->MarkVisitPtrs(extractor);
+                pair.resolveReaction->MarkVisitPtrs(extractor);
+            });
         }
     }
 
@@ -1344,29 +1737,34 @@ namespace Js
             depOnList.Add(TTD_CONVERT_VAR_TO_PTR_ID(this->result));
         }
 
-        spi->Status = this->status;
+        spi->Status = this->GetStatus();
+        spi->isHandled = this->GetIsHandled();
 
-        spi->ResolveReactionCount = (this->resolveReactions != nullptr) ? this->resolveReactions->Count() : 0;
+        // get count of # of reactions
+        spi->ResolveReactionCount = 0;
+        if (this->reactions != nullptr)
+        {
+            this->reactions->Map([&spi](JavascriptPromiseReactionPair pair) {
+                spi->ResolveReactionCount++;
+            });
+        }
+        spi->RejectReactionCount = spi->ResolveReactionCount;
+
+        // move resolve & reject reactions into slab
         spi->ResolveReactions = nullptr;
+        spi->RejectReactions = nullptr;
         if(spi->ResolveReactionCount != 0)
         {
             spi->ResolveReactions = alloc.SlabAllocateArray<TTD::NSSnapValues::SnapPromiseReactionInfo>(spi->ResolveReactionCount);
-
-            for(uint32 i = 0; i < spi->ResolveReactionCount; ++i)
-            {
-                this->resolveReactions->Item(i)->ExtractSnapPromiseReactionInto(spi->ResolveReactions + i, depOnList, alloc);
-            }
-        }
-
-        spi->RejectReactionCount = (this->rejectReactions != nullptr) ? this->rejectReactions->Count() : 0;
-        spi->RejectReactions = nullptr;
-        if(spi->RejectReactionCount != 0)
-        {
             spi->RejectReactions = alloc.SlabAllocateArray<TTD::NSSnapValues::SnapPromiseReactionInfo>(spi->RejectReactionCount);
 
-            for(uint32 i = 0; i < spi->RejectReactionCount; ++i)
+            JavascriptPromiseReactionList::Iterator it = this->reactions->GetIterator();
+            uint32 i = 0;
+            while (it.Next())
             {
-                this->rejectReactions->Item(i)->ExtractSnapPromiseReactionInto(spi->RejectReactions+ i, depOnList, alloc);
+                it.Data().resolveReaction->ExtractSnapPromiseReactionInto(spi->ResolveReactions + i, depOnList, alloc);
+                it.Data().rejectReaction->ExtractSnapPromiseReactionInto(spi->RejectReactions + i, depOnList, alloc);
+                ++i;
             }
         }
 
@@ -1389,21 +1787,37 @@ namespace Js
         }
     }
 
-    JavascriptPromise* JavascriptPromise::InitializePromise_TTD(ScriptContext* scriptContext, uint32 status, Var result, JsUtil::List<Js::JavascriptPromiseReaction*, HeapAllocator>& resolveReactions, JsUtil::List<Js::JavascriptPromiseReaction*, HeapAllocator>& rejectReactions)
+    JavascriptPromise* JavascriptPromise::InitializePromise_TTD(ScriptContext* scriptContext, uint32 status, bool isHandled, Var result, SList<Js::JavascriptPromiseReaction*, HeapAllocator>& resolveReactions,SList<Js::JavascriptPromiseReaction*, HeapAllocator>& rejectReactions)
     {
         Recycler* recycler = scriptContext->GetRecycler();
         JavascriptLibrary* library = scriptContext->GetLibrary();
 
         JavascriptPromise* promise = library->CreatePromise();
 
-        promise->status = (PromiseStatus)status;
+        promise->SetStatus((PromiseStatus)status);
+        if (isHandled)
+        {
+            promise->SetIsHandled();
+        }
         promise->result = result;
 
-        promise->resolveReactions = RecyclerNew(recycler, JavascriptPromiseReactionList, recycler);
-        promise->resolveReactions->Copy(&resolveReactions);
+        promise->reactions = RecyclerNew(recycler, JavascriptPromiseReactionList, recycler);
+        SList<Js::JavascriptPromiseReaction*, HeapAllocator>::Iterator resolveIterator = resolveReactions.GetIterator();
+        SList<Js::JavascriptPromiseReaction*, HeapAllocator>::Iterator rejectIterator = rejectReactions.GetIterator();
 
-        promise->rejectReactions = RecyclerNew(recycler, JavascriptPromiseReactionList, recycler);
-        promise->rejectReactions->Copy(&rejectReactions);
+        bool hasResolve = resolveIterator.Next();
+        bool hasReject = rejectIterator.Next();
+        while (hasResolve && hasReject)
+        {
+            JavascriptPromiseReactionPair pair;
+            pair.resolveReaction = resolveIterator.Data();
+            pair.rejectReaction = rejectIterator.Data();
+            promise->reactions->Prepend(pair);
+            hasResolve = resolveIterator.Next();
+            hasReject = rejectIterator.Next();
+        }
+        AssertMsg(hasResolve == false && hasReject == false, "mismatched resolve/reject reaction counts");
+        promise->reactions->Reverse();
 
         return promise;
     }
@@ -1417,9 +1831,19 @@ namespace Js
             JavascriptError::ThrowTypeError(scriptContext, JSERR_NeedFunction);
         }
 
-        RecyclableObject* constructorFunc = RecyclableObject::FromVar(constructor);
+        RecyclableObject* constructorFunc = VarTo<RecyclableObject>(constructor);
 
-        return CreatePromiseCapabilityRecord(constructorFunc, scriptContext);
+        BEGIN_SAFE_REENTRANT_CALL(scriptContext->GetThreadContext())
+        {
+            return CreatePromiseCapabilityRecord(constructorFunc, scriptContext);
+        }
+        END_SAFE_REENTRANT_CALL
+    }
+
+    JavascriptPromiseCapability* JavascriptPromise::UnusedPromiseCapability(ScriptContext* scriptContext)
+    {
+        // TODO(zenparsing): Optimize me
+        return NewPromiseCapability(scriptContext->GetLibrary()->GetPromiseConstructor(), scriptContext);
     }
 
     // CreatePromiseCapabilityRecord as described in ES6.0 (draft 29) Section 25.4.1.6.1
@@ -1447,15 +1871,24 @@ namespace Js
     }
 
     // TriggerPromiseReactions as defined in ES 2015 Section 25.4.1.7
-    Var JavascriptPromise::TriggerPromiseReactions(JavascriptPromiseReactionList* reactions, Var resolution, ScriptContext* scriptContext)
+    Var JavascriptPromise::TriggerPromiseReactions(JavascriptPromiseReactionList* reactions, bool isRejecting, Var resolution, ScriptContext* scriptContext)
     {
         JavascriptLibrary* library = scriptContext->GetLibrary();
 
         if (reactions != nullptr)
         {
-            for (int i = 0; i < reactions->Count(); i++)
+            JavascriptPromiseReactionList::Iterator it = reactions->GetIterator();
+            while (it.Next())
             {
-                JavascriptPromiseReaction* reaction = reactions->Item(i);
+                JavascriptPromiseReaction* reaction;
+                if (isRejecting)
+                {
+                    reaction = it.Data().rejectReaction;
+                }
+                else
+                {
+                    reaction = it.Data().resolveReaction;
+                }
 
                 EnqueuePromiseReactionTask(reaction, resolution, scriptContext);
             }
@@ -1482,31 +1915,15 @@ namespace Js
         : RuntimeFunction(type, functionInfo), promise(promise), isReject(isReject), alreadyResolvedWrapper(alreadyResolvedRecord)
     { }
 
-    bool JavascriptPromiseResolveOrRejectFunction::Is(Var var)
+    template <> bool VarIsImpl<JavascriptPromiseResolveOrRejectFunction>(RecyclableObject* obj)
     {
-        if (JavascriptFunction::Is(var))
+        if (VarIs<JavascriptFunction>(obj))
         {
-            JavascriptFunction* obj = JavascriptFunction::UnsafeFromVar(var);
-
             return VirtualTableInfo<JavascriptPromiseResolveOrRejectFunction>::HasVirtualTable(obj)
                 || VirtualTableInfo<CrossSiteObject<JavascriptPromiseResolveOrRejectFunction>>::HasVirtualTable(obj);
         }
 
         return false;
-    }
-
-    JavascriptPromiseResolveOrRejectFunction* JavascriptPromiseResolveOrRejectFunction::FromVar(Var var)
-    {
-        AssertOrFailFast(JavascriptPromiseResolveOrRejectFunction::Is(var));
-
-        return static_cast<JavascriptPromiseResolveOrRejectFunction*>(var);
-    }
-
-    JavascriptPromiseResolveOrRejectFunction* JavascriptPromiseResolveOrRejectFunction::UnsafeFromVar(Var var)
-    {
-        Assert(JavascriptPromiseResolveOrRejectFunction::Is(var));
-
-        return static_cast<JavascriptPromiseResolveOrRejectFunction*>(var);
     }
 
     JavascriptPromise* JavascriptPromiseResolveOrRejectFunction::GetPromise()
@@ -1569,33 +1986,16 @@ namespace Js
         : RuntimeFunction(type, functionInfo), generator(generator), target(target)
     { }
 
-    bool JavascriptPromiseAsyncSpawnExecutorFunction::Is(Var var)
+    template <> bool VarIsImpl<JavascriptPromiseAsyncSpawnExecutorFunction>(RecyclableObject* obj)
     {
-        if (JavascriptFunction::Is(var))
+        if (VarIs<JavascriptFunction>(obj))
         {
-            JavascriptFunction* obj = JavascriptFunction::UnsafeFromVar(var);
-
             return VirtualTableInfo<JavascriptPromiseAsyncSpawnExecutorFunction>::HasVirtualTable(obj)
                 || VirtualTableInfo<CrossSiteObject<JavascriptPromiseAsyncSpawnExecutorFunction>>::HasVirtualTable(obj);
         }
 
         return false;
     }
-
-    JavascriptPromiseAsyncSpawnExecutorFunction* JavascriptPromiseAsyncSpawnExecutorFunction::FromVar(Var var)
-    {
-        AssertOrFailFast(JavascriptPromiseAsyncSpawnExecutorFunction::Is(var));
-
-        return static_cast<JavascriptPromiseAsyncSpawnExecutorFunction*>(var);
-    }
-
-    JavascriptPromiseAsyncSpawnExecutorFunction* JavascriptPromiseAsyncSpawnExecutorFunction::UnsafeFromVar(Var var)
-    {
-        Assert(JavascriptPromiseAsyncSpawnExecutorFunction::Is(var));
-
-        return static_cast<JavascriptPromiseAsyncSpawnExecutorFunction*>(var);
-    }
-
 
     JavascriptGenerator* JavascriptPromiseAsyncSpawnExecutorFunction::GetGenerator()
     {
@@ -1639,31 +2039,15 @@ namespace Js
         : RuntimeFunction(type, functionInfo), generator(generator), argument(argument), resolve(resolve), reject(reject), isReject(isReject)
     { }
 
-    bool JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction::Is(Var var)
+    template <> bool VarIsImpl<JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction>(RecyclableObject* obj)
     {
-        if (JavascriptFunction::Is(var))
+        if (VarIs<JavascriptFunction>(obj))
         {
-            JavascriptFunction* obj = JavascriptFunction::UnsafeFromVar(var);
-
             return VirtualTableInfo<JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction>::HasVirtualTable(obj)
                 || VirtualTableInfo<CrossSiteObject<JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction>>::HasVirtualTable(obj);
         }
 
         return false;
-    }
-
-    JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction* JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction::FromVar(Var var)
-    {
-        AssertOrFailFast(JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction::Is(var));
-
-        return static_cast<JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction*>(var);
-    }
-
-    JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction* JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction::UnsafeFromVar(Var var)
-    {
-        Assert(JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction::Is(var));
-
-        return static_cast<JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction*>(var);
     }
 
     JavascriptGenerator* JavascriptPromiseAsyncSpawnStepArgumentExecutorFunction::GetGenerator()
@@ -1779,7 +2163,7 @@ namespace Js
         {
             alloc.SlabCommitArraySpace<TTD_PTR_ID>(depCount, maxDeps);
         }
-        else 
+        else
         {
             alloc.SlabAbortArraySpace<TTD_PTR_ID>(maxDeps);
         }
@@ -1800,31 +2184,15 @@ namespace Js
         : RuntimeFunction(type, functionInfo), capability(capability)
     { }
 
-    bool JavascriptPromiseCapabilitiesExecutorFunction::Is(Var var)
+    template <> bool VarIsImpl<JavascriptPromiseCapabilitiesExecutorFunction>(RecyclableObject* obj)
     {
-        if (JavascriptFunction::Is(var))
+        if (VarIs<JavascriptFunction>(obj))
         {
-            JavascriptFunction* obj = JavascriptFunction::UnsafeFromVar(var);
-
             return VirtualTableInfo<JavascriptPromiseCapabilitiesExecutorFunction>::HasVirtualTable(obj)
                 || VirtualTableInfo<CrossSiteObject<JavascriptPromiseCapabilitiesExecutorFunction>>::HasVirtualTable(obj);
         }
 
         return false;
-    }
-
-    JavascriptPromiseCapabilitiesExecutorFunction* JavascriptPromiseCapabilitiesExecutorFunction::FromVar(Var var)
-    {
-        AssertOrFailFast(JavascriptPromiseCapabilitiesExecutorFunction::Is(var));
-
-        return static_cast<JavascriptPromiseCapabilitiesExecutorFunction*>(var);
-    }
-
-    JavascriptPromiseCapabilitiesExecutorFunction* JavascriptPromiseCapabilitiesExecutorFunction::UnsafeFromVar(Var var)
-    {
-        Assert(JavascriptPromiseCapabilitiesExecutorFunction::Is(var));
-
-        return static_cast<JavascriptPromiseCapabilitiesExecutorFunction*>(var);
     }
 
     JavascriptPromiseCapability* JavascriptPromiseCapabilitiesExecutorFunction::GetCapability()
@@ -1958,6 +2326,17 @@ namespace Js
     }
 #endif
 
+    template <> bool VarIsImpl<JavascriptPromiseReactionTaskFunction>(RecyclableObject* obj)
+    {
+        if (VarIs<JavascriptFunction>(obj))
+        {
+            return VirtualTableInfo<JavascriptPromiseReactionTaskFunction>::HasVirtualTable(obj)
+                || VirtualTableInfo<CrossSiteObject<JavascriptPromiseReactionTaskFunction>>::HasVirtualTable(obj);
+        }
+
+        return false;
+    }
+
     JavascriptPromiseReaction* JavascriptPromiseReactionTaskFunction::GetReaction()
     {
         return this->reaction;
@@ -2018,6 +2397,38 @@ namespace Js
     }
 #endif
 
+    template <> bool VarIsImpl<JavascriptPromiseThenFinallyFunction>(RecyclableObject* obj)
+    {
+        if (VarIs<JavascriptFunction>(obj))
+        {
+            return VirtualTableInfo<JavascriptPromiseThenFinallyFunction>::HasVirtualTable(obj)
+                || VirtualTableInfo<CrossSiteObject<JavascriptPromiseThenFinallyFunction>>::HasVirtualTable(obj);
+        }
+
+        return false;
+    }
+
+    template <> bool VarIsImpl<JavascriptPromiseThunkFinallyFunction>(RecyclableObject* obj)
+    {
+        if (VarIs<JavascriptFunction>(obj))
+        {
+            return VirtualTableInfo<JavascriptPromiseThunkFinallyFunction>::HasVirtualTable(obj)
+                || VirtualTableInfo<CrossSiteObject<JavascriptPromiseThunkFinallyFunction>>::HasVirtualTable(obj);
+        }
+        return false;
+    }
+
+    template <> bool VarIsImpl<JavascriptPromiseResolveThenableTaskFunction>(RecyclableObject* obj)
+    {
+        if (VarIs<JavascriptFunction>(obj))
+        {
+            return VirtualTableInfo<JavascriptPromiseResolveThenableTaskFunction>::HasVirtualTable(obj)
+                || VirtualTableInfo<CrossSiteObject<JavascriptPromiseResolveThenableTaskFunction>>::HasVirtualTable(obj);
+        }
+
+        return false;
+    }
+
     JavascriptPromise* JavascriptPromiseResolveThenableTaskFunction::GetPromise()
     {
         return this->promise;
@@ -2051,6 +2462,86 @@ namespace Js
     }
 #endif
 
+    JavascriptPromiseAllSettledResolveOrRejectElementFunction::JavascriptPromiseAllSettledResolveOrRejectElementFunction(DynamicType* type)
+        : JavascriptPromiseAllResolveElementFunction(type), alreadyCalledWrapper(nullptr), isRejecting(false)
+    { }
+
+    JavascriptPromiseAllSettledResolveOrRejectElementFunction::JavascriptPromiseAllSettledResolveOrRejectElementFunction(DynamicType* type, FunctionInfo* functionInfo, uint32 index, JavascriptArray* values, JavascriptPromiseCapability* capabilities, JavascriptPromiseAllResolveElementFunctionRemainingElementsWrapper* remainingElementsWrapper, JavascriptPromiseResolveOrRejectFunctionAlreadyResolvedWrapper* alreadyCalledWrapper, bool isRejecting)
+        : JavascriptPromiseAllResolveElementFunction(type, functionInfo, index, values, capabilities, remainingElementsWrapper), alreadyCalledWrapper(alreadyCalledWrapper), isRejecting(isRejecting)
+    { }
+
+    bool JavascriptPromiseAllSettledResolveOrRejectElementFunction::IsAlreadyCalled() const
+    {
+        Assert(this->alreadyCalledWrapper);
+
+        return this->alreadyCalledWrapper->alreadyResolved;
+    }
+
+    void JavascriptPromiseAllSettledResolveOrRejectElementFunction::SetAlreadyCalled(const bool is)
+    {
+        Assert(this->alreadyCalledWrapper);
+
+        this->alreadyCalledWrapper->alreadyResolved = is;
+    }
+
+    bool JavascriptPromiseAllSettledResolveOrRejectElementFunction::IsRejectFunction()
+    {
+        return this->isRejecting;
+    }
+
+    template <> bool VarIsImpl<JavascriptPromiseAllSettledResolveOrRejectElementFunction>(RecyclableObject* obj)
+    {
+        if (VarIs<JavascriptFunction>(obj))
+        {
+            return VirtualTableInfo<JavascriptPromiseAllSettledResolveOrRejectElementFunction>::HasVirtualTable(obj)
+                || VirtualTableInfo<CrossSiteObject<JavascriptPromiseAllSettledResolveOrRejectElementFunction>>::HasVirtualTable(obj);
+        }
+
+        return false;
+    }
+
+#if ENABLE_TTD
+    void JavascriptPromiseAllSettledResolveOrRejectElementFunction::MarkVisitKindSpecificPtrs(TTD::SnapshotExtractor* extractor)
+    {
+        TTDAssert(this->capabilities != nullptr && this->remainingElementsWrapper != nullptr && this->alreadyCalledWrapper != nullptr && this->values != nullptr, "Don't think these can be null");
+
+        this->capabilities->MarkVisitPtrs(extractor);
+        extractor->MarkVisitVar(this->values);
+    }
+
+    TTD::NSSnapObjects::SnapObjectType JavascriptPromiseAllSettledResolveOrRejectElementFunction::GetSnapTag_TTD() const
+    {
+        return TTD::NSSnapObjects::SnapObjectType::SnapPromiseAllSettledResolveOrRejectElementFunctionObject;
+    }
+
+    void JavascriptPromiseAllSettledResolveOrRejectElementFunction::ExtractSnapObjectDataInto(TTD::NSSnapObjects::SnapObject* objData, TTD::SlabAllocator& alloc)
+    {
+        TTD::NSSnapObjects::SnapPromiseAllResolveElementFunctionInfo* sprai = alloc.SlabAllocateStruct<TTD::NSSnapObjects::SnapPromiseAllResolveElementFunctionInfo>();
+
+        JsUtil::List<TTD_PTR_ID, HeapAllocator> depOnList(&HeapAllocator::Instance);
+        this->capabilities->ExtractSnapPromiseCapabilityInto(&sprai->Capabilities, depOnList, alloc);
+
+        sprai->Index = this->index;
+        sprai->RemainingElementsWrapperId = TTD_CONVERT_PROMISE_INFO_TO_PTR_ID(this->remainingElementsWrapper);
+        sprai->RemainingElementsValue = this->remainingElementsWrapper->remainingElements;
+
+        sprai->Values = TTD_CONVERT_VAR_TO_PTR_ID(this->values);
+        depOnList.Add(sprai->Values);
+
+        sprai->AlreadyCalled = this->alreadyCalled;
+
+        uint32 depOnCount = depOnList.Count();
+        TTD_PTR_ID* depOnArray = alloc.SlabAllocateArray<TTD_PTR_ID>(depOnCount);
+
+        for (uint32 i = 0; i < depOnCount; ++i)
+        {
+            depOnArray[i] = depOnList.Item(i);
+        }
+
+        TTD::NSSnapObjects::StdExtractSetKindSpecificInfo<TTD::NSSnapObjects::SnapPromiseAllResolveElementFunctionInfo*, TTD::NSSnapObjects::SnapObjectType::SnapPromiseAllResolveElementFunctionObject>(objData, sprai, alloc, depOnCount, depOnArray);
+    }
+#endif
+
     JavascriptPromiseAllResolveElementFunction::JavascriptPromiseAllResolveElementFunction(DynamicType* type)
         : RuntimeFunction(type, &Js::JavascriptPromise::EntryInfo::AllResolveElementFunction), index(0), values(nullptr), capabilities(nullptr), remainingElementsWrapper(nullptr), alreadyCalled(false)
     { }
@@ -2059,31 +2550,15 @@ namespace Js
         : RuntimeFunction(type, functionInfo), index(index), values(values), capabilities(capabilities), remainingElementsWrapper(remainingElementsWrapper), alreadyCalled(false)
     { }
 
-    bool JavascriptPromiseAllResolveElementFunction::Is(Var var)
+    template <> bool VarIsImpl<JavascriptPromiseAllResolveElementFunction>(RecyclableObject* obj)
     {
-        if (JavascriptFunction::Is(var))
+        if (VarIs<JavascriptFunction>(obj))
         {
-            JavascriptFunction* obj = JavascriptFunction::UnsafeFromVar(var);
-
             return VirtualTableInfo<JavascriptPromiseAllResolveElementFunction>::HasVirtualTable(obj)
                 || VirtualTableInfo<CrossSiteObject<JavascriptPromiseAllResolveElementFunction>>::HasVirtualTable(obj);
         }
 
         return false;
-    }
-
-    JavascriptPromiseAllResolveElementFunction* JavascriptPromiseAllResolveElementFunction::FromVar(Var var)
-    {
-        AssertOrFailFast(JavascriptPromiseAllResolveElementFunction::Is(var));
-
-        return static_cast<JavascriptPromiseAllResolveElementFunction*>(var);
-    }
-
-    JavascriptPromiseAllResolveElementFunction* JavascriptPromiseAllResolveElementFunction::UnsafeFromVar(Var var)
-    {
-        Assert(JavascriptPromiseAllResolveElementFunction::Is(var));
-
-        return static_cast<JavascriptPromiseAllResolveElementFunction*>(var);
     }
 
     JavascriptPromiseCapability* JavascriptPromiseAllResolveElementFunction::GetCapabilities()

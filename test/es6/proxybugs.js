@@ -230,7 +230,47 @@ var tests = [
             };
 
             var obj = Proxy.revocable({}, handler);
-            assert.throws( () => { Object.getOwnPropertyDescriptor(obj.proxy, 'a'); }, TypeError);
+            Object.getOwnPropertyDescriptor(obj.proxy, 'a');
+            assert.isTrue(trapCalled);
+        }
+    },
+    {
+        name: "Assertion validation : revoking the proxy in getOwnPropertyDescriptor trap, undefined argument",
+        body() {
+            var trapCalled = false;
+            var handler = {
+                getOwnPropertyDescriptor: function (a, b, c) {
+                    trapCalled = true;
+                    obj.revoke();
+
+                    // used to cause AV
+                    a[undefined] = new String();
+                }
+            };
+
+            var obj = Proxy.revocable({}, handler);
+            Object.getOwnPropertyDescriptor(obj.proxy);
+            assert.isTrue(trapCalled);
+        }
+    },
+    {
+        name: "Assertion validation : revoking the proxy in getOwnPropertyDescriptor trap, not undefined return",
+        body() {
+            var trapCalled = false;
+            var handler = {
+                getOwnPropertyDescriptor: function (a, b, c) {
+                    trapCalled = true;
+                    let result = Object.getOwnPropertyDescriptor(obj, 'proxy');
+
+                    obj.revoke();
+
+                    // used to cause AV
+                    return result;
+                }
+            };
+
+            var obj = Proxy.revocable({}, handler);
+            Object.getOwnPropertyDescriptor(obj.proxy);
             assert.isTrue(trapCalled);
         }
     },
@@ -429,6 +469,48 @@ var tests = [
             assert.isUndefined(withtrap.noTrap);
         }
     },
+    {
+        name: "Constructing object from a proxy object (which has proxy as target) should not fire an Assert (OS# 17516464)",
+        body() {
+            function Foo(a) {
+                this.x = a;
+            }
+            var proxy = new Proxy(Foo, {});
+            var proxy1 = new Proxy(proxy, {});
+            var proxy2 = new Proxy(proxy1, {});
+            var obj1 = new proxy2(10);
+            assert.areEqual(10, obj1.x);
+
+            var obj2 = Reflect.construct(proxy2, [20]);
+            assert.areEqual(20, obj2.x);
+        }
+    },
+    {
+        name: "Proxy's ownKeys is returning duplicate keys should throw",
+        body() {
+            var proxy = new Proxy({}, {
+                ownKeys: function (t) {
+                    return ["a", "a"];
+                }
+            });
+            assert.throws(()=> { Object.keys(proxy);}, TypeError, "proxy's ownKeys is returning duplicate keys", "Proxy's ownKeys trap returned duplicate keys");
+        }
+    },
+    {
+        name : "Proxy with DefineOwnProperty trap should not get descriptor properties twice",
+        body() {
+            const desc = { };
+            let counter = 0;
+            let handler = {
+                defineProperty : function (oTarget, sKey, oDesc) { 
+                    return Reflect.defineProperty(oTarget, sKey, oDesc); 
+                }
+            };
+            Object.defineProperty(desc, "writable", { get: function () { ++counter; return true; }});
+            Object.defineProperty(new Proxy({}, handler), "test", desc);
+            assert.areEqual(1, counter, "Writable property on descriptor should only be checked once");
+        }
+    }
 ];
 
 testRunner.runTests(tests, { verbose: WScript.Arguments[0] != "summary" });

@@ -11,20 +11,32 @@
 ///
 ///---------------------------------------------------------------------------
 
-typedef JsUtil::List<NativeOffsetInlineeFramePair, ArenaAllocator> InlineeFrameMap;
+typedef JsUtil::List<NativeOffsetInlineeFramePair, ArenaAllocator> ArenaInlineeFrameMap;
 typedef JsUtil::List<IR::PragmaInstr*, ArenaAllocator> PragmaInstrList;
 typedef JsUtil::List<uint32, ArenaAllocator> OffsetList;
 typedef JsUtil::List<BranchJumpTableWrapper*, ArenaAllocator> JmpTableList;
+typedef JsUtil::List<LazyBailOutRecord, ArenaAllocator> ArenaLazyBailoutRecordList;
+
+struct FixUpMapIndex
+{
+    uint32 offsetBuffIndex = 0;
+    uint32 pragmaInstToRecordOffsetIndex = 0;
+    uint32 inlineeFrameRecordsIndex = 0;
+    uint32 inlineeFrameMapIndex = 0;
+    uint32 lazyBailOutRecordListIndex = 0;
+};
 
 class Encoder
 {
     friend class EncoderMD;
 public:
-    Encoder(Func * func) : m_func(func), m_encoderMD(func), m_inlineeFrameMap(nullptr) {}
+    Encoder(Func * func) :
+        m_func(func), m_encoderMD(func), m_inlineeFrameMap(nullptr),
+        m_lazyBailOutThunkOffset(0), m_sortedLazyBailoutRecordList(nullptr)
+        {}
 
     void            Encode();
     void            RecordInlineeFrame(Func* inlinee, uint32 currentOffset);
-    void            RecordBailout(IR::Instr* instr, uint32 currentOffset);
 private:
     bool            DoTrackAllStatementBoundary() const;
 
@@ -35,11 +47,12 @@ private:
     uint32          m_encodeBufferSize;
     ArenaAllocator *m_tempAlloc;
 
-    InlineeFrameMap* m_inlineeFrameMap;
+    ArenaInlineeFrameMap* m_inlineeFrameMap;
     uint32 m_inlineeFrameMapDataOffset;
     uint32 m_inlineeFrameMapRecordCount;
-    typedef JsUtil::List<LazyBailOutRecord, ArenaAllocator> BailoutRecordMap;
-    BailoutRecordMap* m_bailoutRecordMap;
+    
+    uint32 m_lazyBailOutThunkOffset;
+    ArenaLazyBailoutRecordList* m_sortedLazyBailoutRecordList;
 #if DBG_DUMP
     void DumpInlineeFrameMap(size_t baseAddress);
     uint32 *        m_offsetBuffer;
@@ -63,11 +76,12 @@ private:
     void            TryCopyAndAddRelocRecordsForSwitchJumpTableEntries(BYTE *codeStart, size_t codeSize, JmpTableList * jumpTableListForSwitchStatement, size_t totalJmpTableSizeInBytes);
 
     void            ValidateCRC(uint bufferCRC, uint initialCRCSeed, _In_reads_bytes_(count) void* buffer, size_t count);
-    static uint     CalculateCRC(uint bufferCRC, size_t count, _In_reads_bytes_(count) void * buffer);
-    static uint     CalculateCRC(uint bufferCRC, size_t data);
     static void     EnsureRelocEntryIntegrity(size_t newBufferStartAddress, size_t codeSize, size_t oldBufferAddress, size_t relocAddress, uint offsetBytes, ptrdiff_t opndData, bool isRelativeAddr = true);
 #if defined(_M_IX86) || defined(_M_X64)
     void            ValidateCRCOnFinalBuffer(_In_reads_bytes_(finalCodeSize) BYTE * finalCodeBufferStart, size_t finalCodeSize, size_t jumpTableSize, _In_reads_bytes_(finalCodeSize) BYTE * oldCodeBufferStart, uint initialCrcSeed, uint bufferCrcToValidate, BOOL isSuccessBrShortAndLoopAlign);
 #endif
+    void            FixLazyBailOutThunkOffset(uint32 bytesSaved);
+    void            SaveLazyBailOutJitTransferData();
+    void            SaveLazyBailOutThunkOffset(uint32 currentOffset);
+    void            SaveToLazyBailOutRecordList(IR::Instr* instr, uint32 currentOffset);
 };
-

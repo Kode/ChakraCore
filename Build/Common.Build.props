@@ -65,6 +65,8 @@
       <!-- /Gy -->
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <!-- /GF -->
+      <ControlFlowGuard Condition="'$(Platform)'!='ARM'">Guard</ControlFlowGuard>
+      <!-- /guard:cf -->
       <StringPooling>true</StringPooling>
       <!-- /MD -->
       <RuntimeLibrary Condition="'$(RuntimeLib)'!='static_library'">MultiThreadedDLL</RuntimeLibrary>
@@ -90,6 +92,13 @@
         BYTECODE_TESTING=1
       </PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(BuildWabt)'=='true'">%(PreprocessorDefinitions);CAN_BUILD_WABT=1</PreprocessorDefinitions>
+
+      <PreprocessorDefinitions Condition="'$(ChakraVersionBuildNumber)'!=''">%(PreprocessorDefinitions);CHAKRA_VERSION_BUILD_NUMBER=$(ChakraVersionBuildNumber)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(ChakraVersionBuildQFENumber)'!=''">%(PreprocessorDefinitions);CHAKRA_VERSION_BUILD_QFE=$(ChakraVersionBuildQFENumber)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(ChakraVersionBuildCommit)'!=''">%(PreprocessorDefinitions);CHAKRA_VERSION_BUILD_COMMIT=$(ChakraVersionBuildCommit)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(ChakraVersionBuildDate)'!=''">%(PreprocessorDefinitions);CHAKRA_VERSION_BUILD_DATE=$(ChakraVersionBuildDate)</PreprocessorDefinitions>
+
+
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions Condition="'$(ChakraVersionBuildNumber)'!=''">%(PreprocessorDefinitions);CHAKRA_VERSION_BUILD_NUMBER=$(ChakraVersionBuildNumber)</PreprocessorDefinitions>

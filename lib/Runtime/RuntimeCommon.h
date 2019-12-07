@@ -9,6 +9,12 @@
 
 const extern int TotalNumberOfBuiltInProperties;
 
+#if defined(TARGET_32)
+#define PolymorphicInlineCacheShift 5 // On 32 bit architectures, the least 5 significant bits of a DynamicTypePointer is 0
+#else
+#define PolymorphicInlineCacheShift 6 // On 64 bit architectures, the least 6 significant bits of a DynamicTypePointer is 0
+#endif
+
 namespace Js
 {
     // Forwards
@@ -173,7 +179,12 @@ namespace Js
 
 #if FLOATVAR
     const uint64 FloatTag_Value       = 0xFFFCull << 48;
+    const uint64 VarMissingItemPattern = 0x00040002FFF80002; // Float-tagged representation of FloatMissingItemPattern
+#else
+    const int32 VarMissingItemPattern = 0xFFF80002;
 #endif
+    const uint64 FloatMissingItemPattern = 0xFFF80002FFF80002;
+    const int32 IntMissingItemPattern = 0xFFF80002;
     template <bool IsPrototypeTemplate> class NullTypeHandler;
 
     template <typename TPropertyIndex, typename TMapKey, bool IsNotExtensibleSupported> class SimpleDictionaryTypeHandlerBase;

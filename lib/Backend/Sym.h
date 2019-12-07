@@ -28,6 +28,7 @@ enum SymKind : BYTE
 };
 
 typedef uint32 SymID;
+constexpr SymID SymID_Invalid = (SymID)-1;
 
 
 ///---------------------------------------------------------------------------
@@ -127,6 +128,7 @@ public:
     void            SetIsFloatConst();
     void            SetIsSimd128Const();
     void            SetIsStrConst();
+    bool            GetIsStrConst();
 
     intptr_t        GetLiteralConstValue_PostGlobOpt() const;
     IR::Opnd *      GetConstOpnd() const;

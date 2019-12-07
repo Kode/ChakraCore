@@ -5,6 +5,8 @@
 
 #pragma once
 
+class Value;
+
 struct BailoutConstantValue {
 public:
     void InitIntConstValue(int32 value) { this->type = TyInt32; this->u.intConst.value = (IntConstType)value; };
@@ -149,6 +151,8 @@ struct InlineeFrameInfo
     InlineeFrameRecord* record;
     BVSparse<JitArenaAllocator>* floatSyms;
     BVSparse<JitArenaAllocator>* intSyms;
+    BVSparse<JitArenaAllocator>* varSyms;
+    Value* functionSymStartValue;
 
     bool isRecorded;
 

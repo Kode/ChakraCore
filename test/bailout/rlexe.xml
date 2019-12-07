@@ -206,6 +206,7 @@
   <test>
     <default>
       <files>implicit_nosideeffect.js</files>
+      <compile-flags>-off:earlyreferenceerrors</compile-flags>
       <baseline>implicit_nosideeffect.baseline</baseline>
     </default>
   </test>
@@ -231,7 +232,7 @@
     <default>
       <files>bailout-branch.js</files>
       <baseline>bailout-branch.baseline</baseline>
-      <compile-flags>-forcejitloopbody -force:fieldhoist</compile-flags>
+      <compile-flags>-forcejitloopbody</compile-flags>
     </default>
   </test>
   <test>
@@ -267,6 +268,11 @@
   <test>
     <default>
       <files>bug13674598.js</files>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>bug17449647.js</files>
     </default>
   </test>
 </regress-exe>

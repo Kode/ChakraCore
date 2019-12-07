@@ -157,17 +157,17 @@ SmallRecyclerVisitedHostHeapBlockT<TBlockAttributes>::SetAttributes(void * addre
     // but recycler visited block allows traced only objects; it also unconditionally bumps the heap info
     // live/new finalizable object counts which will become unbalance if FinalizeBit is not set).
     // We do want the grandparent class behavior though, which actually sets the ObjectInfo bits.
-    SmallFinalizableHeapBlockT<TBlockAttributes>::Base::SetAttributes(address, attributes);
+    SmallNormalHeapBlockT<TBlockAttributes>::SetAttributes(address, attributes);
 
-#ifdef RECYCLER_FINALIZE_CHECK
     if (attributes & FinalizeBit)
     {
         this->finalizeCount++;
+#ifdef RECYCLER_FINALIZE_CHECK
         HeapInfo * heapInfo = this->heapBucket->heapInfo;
         heapInfo->liveFinalizableObjectCount++;
         heapInfo->newFinalizableObjectCount++;
-    }
 #endif
+    }
 }
 
 template <class TBlockAttributes>

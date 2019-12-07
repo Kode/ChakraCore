@@ -16,10 +16,20 @@
   </test>
   <test>
     <default>
+      <files>cacheassert.js</files>
+    </default>
+  </test>
+  <test>
+    <default>
       <files>stringify-replacer.js</files>
       <baseline>stringify-replacer.baseline</baseline>
       <compile-flags>-recyclerstress</compile-flags>
       <tags>exclude_test,Slow</tags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>arguments.js</files>
     </default>
   </test>
   <test>
@@ -100,6 +110,11 @@
   <test>
     <default>
       <files>stackoverflow.js</files>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>jsonerrorbuffer.js</files>
     </default>
   </test>
 </regress-exe>

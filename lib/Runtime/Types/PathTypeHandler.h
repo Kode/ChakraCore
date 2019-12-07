@@ -37,9 +37,9 @@ namespace Js
     public:
         bool IsSingleSuccessor() const { return kind == PathTypeSuccessorKindSingle; }
         bool IsMultiSuccessor() const { return !IsSingleSuccessor(); }
-        virtual bool GetSuccessor(const PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> ** typeWeakRef) const = 0;
-        virtual void SetSuccessor(DynamicType * type, const PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> * typeWeakRef, ScriptContext * scriptContext) = 0;
-        virtual void ReplaceSuccessor(DynamicType * type, PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> * typeWeakRef) = 0;
+        bool GetSuccessor(const PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> ** typeWeakRef) const;
+        void SetSuccessor(DynamicType * type, const PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> * typeWeakRef, ScriptContext * scriptContext);
+        void ReplaceSuccessor(DynamicType * type, PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> * typeWeakRef);
 
         template<class Fn> void MapSuccessors(Fn fn);
         template<class Fn> void MapSuccessorsUntil(Fn fn);
@@ -60,9 +60,9 @@ namespace Js
 
         PathTypeSingleSuccessorInfo(const PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> * typeWeakRef);
 
-        virtual bool GetSuccessor(const PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> ** typeWeakRef) const override;
-        virtual void SetSuccessor(DynamicType * type, const PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> * typeWeakRef, ScriptContext * scriptContext) override;
-        virtual void ReplaceSuccessor(DynamicType * type, PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> * typeWeakRef) override;
+        bool GetSuccessor(const PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> ** typeWeakRef) const;
+        void SetSuccessor(DynamicType * type, const PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> * typeWeakRef, ScriptContext * scriptContext);
+        void ReplaceSuccessor(DynamicType * type, PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> * typeWeakRef);
 
         template<class Fn> void MapSingleSuccessor(Fn fn);
 
@@ -78,9 +78,9 @@ namespace Js
 
         PathTypeMultiSuccessorInfo(Recycler * recycler, const PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> * typeWeakRef);
 
-        virtual bool GetSuccessor(const PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> ** typeWeakRef) const override;
-        virtual void SetSuccessor(DynamicType * type, const PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> * typeWeakRef, ScriptContext * scriptContext) override;
-        virtual void ReplaceSuccessor(DynamicType * type, PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> * typeWeakRef) override;
+        bool GetSuccessor(const PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> ** typeWeakRef) const;
+        void SetSuccessor(DynamicType * type, const PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> * typeWeakRef, ScriptContext * scriptContext);
+        void ReplaceSuccessor(DynamicType * type, PathTypeSuccessorKey successorKey, RecyclerWeakReference<DynamicType> * typeWeakRef);
 
         template<class Fn> void MapMultiSuccessors(Fn fn);
         template<class Fn> void MapMultiSuccessorsUntil(Fn fn);
@@ -102,6 +102,8 @@ namespace Js
         Field(DynamicType*) predecessorType; // Strong reference to predecessor type so that predecessor types remain in the cache even though they might not be used
         Field(TypePath*) typePath;
         Field(PathTypeSuccessorInfo*) successorInfo;
+        Field(bool) hasUserDefinedCtor;
+        Field(bool) hasInternalProperty;
 
     public:
         DEFINE_GETCPPNAME();
@@ -113,6 +115,14 @@ namespace Js
         DEFINE_VTABLE_CTOR_INIT_NO_REGISTER(PathTypeHandlerBase, DynamicTypeHandler, predecessorType(nullptr), typePath(nullptr), successorInfo(nullptr));
 
     public:
+        virtual DynamicTypeHandler * Clone(Recycler * recycler)
+        {
+            AssertMsg(false, "DynamicTypeHandler::Clone is only called (today) when type handler is not shareable, or may not become shared. Path type handlers don't satisfy either condition");
+            return nullptr;
+        }
+
+        bool HasUserDefinedCtor() { return this->hasUserDefinedCtor; }
+
         virtual BOOL IsLockable() const override { return true; }
         virtual BOOL IsSharable() const override { return true; }
 
@@ -127,7 +137,7 @@ namespace Js
         static bool ObjectSlotAttributesContains(const PropertyAttributes attr) { return attr == (attr & ObjectSlotAttr_PropertyAttributesMask); }
         static bool UsePathTypeHandlerForObjectLiteral(const PropertyIdArray *const propIds, bool *const check__proto__Ref = nullptr);
         static DynamicType* CreateTypeForNewScObject(ScriptContext* scriptContext, DynamicType* type, const Js::PropertyIdArray *propIds, bool shareType);
-        static DynamicType* CreateNewScopeObject(ScriptContext* scriptContext, DynamicType* type, const Js::PropertyIdArray *propIds, PropertyAttributes extraAttributes = PropertyNone, uint extraAttributesSlotCount = UINT_MAX);
+        template <bool skipLetAttrForArguments> static DynamicType* CreateNewScopeObject(ScriptContext* scriptContext, DynamicType* type, const Js::PropertyIdArray *propIds, PropertyAttributes extraAttributes = PropertyNone, uint extraAttributesSlotCount = UINT_MAX);
 
         static PathTypeHandlerBase * FromTypeHandler(DynamicTypeHandler * const typeHandler) { Assert(typeHandler->IsPathTypeHandler()); return static_cast<PathTypeHandlerBase*>(typeHandler); }
 
@@ -189,10 +199,12 @@ namespace Js
 
         virtual void SetIsPrototype(DynamicObject* instance) override;
 
+        PathTypeHandlerBase * BuildPathTypeFromNewRoot(DynamicObject * instance, DynamicType ** type);
+
         BOOL FindNextPropertyHelper(ScriptContext* scriptContext, ObjectSlotAttributes * objectAttributes, PropertyIndex& index, JavascriptString** propertyString,
             PropertyId* propertyId, PropertyAttributes* attributes, Type* type, DynamicType *typeToEnumerate, EnumeratorFlags flags, DynamicObject* instance, PropertyValueInfo* info);
         BOOL SetAttributesAtIndex(DynamicObject* instance, PropertyId propertyId, PropertyIndex index, PropertyAttributes attributes);
-        BOOL SetAttributesHelper(DynamicObject* instance, PropertyId propertyId, PropertyIndex propertyIndex, ObjectSlotAttributes * instanceAttributes, ObjectSlotAttributes propertyAttributes, bool isInit = false);
+        BOOL SetAttributesHelper(DynamicObject* instance, PropertyId propertyId, PropertyIndex propertyIndex, ObjectSlotAttributes * instanceAttributes, ObjectSlotAttributes propertyAttributes, bool setAllAttributes = false);
         BOOL SetAccessorsHelper(DynamicObject* instance, PropertyId propertyId, ObjectSlotAttributes * attributes, PathTypeSetterSlotIndex * setters, Var getter, Var setter, PropertyOperationFlags flags);
 
 #if ENABLE_NATIVE_CODEGEN
@@ -451,6 +463,8 @@ namespace Js
         DEFINE_VTABLE_CTOR_NO_REGISTER(PathTypeHandlerNoAttr, PathTypeHandlerBase);
 
     public:
+        virtual bool IsObjectCopyable() const override { return !this->hasInternalProperty; }
+
         static PathTypeHandlerNoAttr * New(ScriptContext * scriptContext, TypePath* typePath, uint16 pathLength, uint16 inlineSlotCapacity, uint16 offsetOfInlineSlots, bool isLocked = false, bool isShared = false, DynamicType* predecessorType = nullptr);
         static PathTypeHandlerNoAttr * New(ScriptContext * scriptContext, TypePath* typePath, uint16 pathLength, const PropertyIndex slotCapacity, uint16 inlineSlotCapacity, uint16 offsetOfInlineSlots, bool isLocked = false, bool isShared = false, DynamicType* predecessorType = nullptr);
         static PathTypeHandlerNoAttr * New(ScriptContext * scriptContext, PathTypeHandlerNoAttr * typeHandler, bool isLocked, bool isShared);
@@ -515,7 +529,7 @@ namespace Js
         virtual BOOL SetProperty(DynamicObject* instance, PropertyId propertyId, Var value, PropertyOperationFlags flags, PropertyValueInfo* info) override;
         virtual BOOL SetProperty(DynamicObject* instance, JavascriptString* propertyNameString, Var value, PropertyOperationFlags flags, PropertyValueInfo* info) override;
 
-        virtual BOOL GetAccessors(DynamicObject* instance, PropertyId propertyId, Var* getter, Var* setter) override;
+        _Check_return_ _Success_(return) virtual BOOL GetAccessors(DynamicObject* instance, PropertyId propertyId, _Outptr_result_maybenull_ Var* getter, _Outptr_result_maybenull_ Var* setter) override;
         virtual BOOL SetAccessors(DynamicObject* instance, PropertyId propertyId, Var getter, Var setter, PropertyOperationFlags flags = PropertyOperation_None) override;
         virtual DescriptorFlags GetSetter(DynamicObject* instance, PropertyId propertyId, Var* setterValue, PropertyValueInfo* info, ScriptContext* requestContext) override;
         virtual DescriptorFlags GetSetter(DynamicObject* instance, JavascriptString* propertyNameString, Var* setterValue, PropertyValueInfo* info, ScriptContext* requestContext) override;
@@ -526,6 +540,7 @@ namespace Js
             return FindNextPropertyHelper(scriptContext, this->attributes, index, propertyString, propertyId, attributes, type, typeToEnumerate, flags, instance, info);
         }
         virtual BOOL AllPropertiesAreEnumerable() sealed override { return false; }
+        virtual bool IsObjectCopyable() const override { return false; }
 #if ENABLE_NATIVE_CODEGEN
         virtual bool IsObjTypeSpecEquivalent(const Type* type, const TypeEquivalenceRecord& record, uint& failedPropertyIndex) override;
         virtual bool IsObjTypeSpecEquivalent(const Type* type, const EquivalentPropertyEntry* entry) override;

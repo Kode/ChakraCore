@@ -76,18 +76,18 @@ public:
 private:
     void Clear()
     {
-        if (ptr != nullptr){
+        if (this->ptr != nullptr){
             for (size_t i = 0; i < this->m_elementCount; i++)
             {
-                if (ptr[i] != nullptr)
+                if (this->ptr[i] != nullptr)
                 {
-                    ptr[i]->CleanUp();
-                    ptr[i] = nullptr;
+                    this->ptr[i]->CleanUp();
+                    this->ptr[i] = nullptr;
                 }
             }
 
-            HeapDeleteArray(m_elementCount, ptr);
-            ptr = nullptr;
+            HeapDeleteArray(this->m_elementCount, this->ptr);
+            this->ptr = nullptr;
         }
     }
 };
@@ -170,6 +170,11 @@ public:
         return &ptr;
     }
 
+    void SetPtr(T* ptr)
+    {
+        this->ptr = ptr;
+    }
+
 private:
     static IUnknown* ComPtrAssign(IUnknown** pp, IUnknown* lp)
     {
@@ -216,6 +221,27 @@ private:
         if (this->ptr != nullptr)
         {
             this->ptr->Discard();
+            this->ptr = nullptr;
+        }
+    }
+};
+
+template <typename T>
+class AutoCoTaskMemFreePtr : public BasePtr<T>
+{
+public:
+    AutoCoTaskMemFreePtr(T* ptr) : BasePtr<T>(ptr) {}
+    ~AutoCoTaskMemFreePtr()
+    {
+        Clear();
+    }
+
+private:
+    void Clear()
+    {
+        if (this->ptr != nullptr)
+        {
+            CoTaskMemFree(this->ptr);
             this->ptr = nullptr;
         }
     }

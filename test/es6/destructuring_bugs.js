@@ -18,7 +18,7 @@ var tests = [
       assert.throws(function () { eval("(function () { 'use strict'; [eval] = []; })();"); }, SyntaxError, "variable name 'eval' defined in array pattern is not valid in strict mode", "Invalid usage of 'eval' in strict mode");
       assert.throws(function () { eval("let a = [a] = [10]"); }, ReferenceError, "A let variable is used in the array pattern in the same statement where it is declared", "Use before declaration");
       assert.throws(function () { eval("let a = {a:a} = {}"); }, ReferenceError, "A let variable is used in object pattern in the same statement where it is declared", "Use before declaration");
-      assert.throws(function () { eval("var a = 1; (delete [a] = [2]);"); }, ReferenceError, "Array literal in unary expression should not be converted to array pattern", "Invalid left-hand side in assignment");
+      assert.throws(function () { eval("var a = 1; (delete [a] = [2]);"); }, SyntaxError, "Array literal in unary expression should not be converted to array pattern", "Invalid left-hand side in assignment.");
       assert.throws(function () { eval("var x, b; for ([x] = [((b) = 1)] of ' ') { }"); }, ReferenceError, "Initializer in for..in is not valid but no assert should be thrown", "Invalid left-hand side in assignment");
       assert.throws(function () { eval("for (let []; ;) { }"); }, SyntaxError, "Native for loop's head has one destructuring pattern without initializer", "Destructuring declarations must have an initializer");
       assert.throws(function () { eval("for (let a = 1, []; ;) { }"); }, SyntaxError, "Native for loop's head has second param as destructuring pattern without initializer", "Destructuring declarations must have an initializer");
@@ -30,6 +30,9 @@ var tests = [
       assert.doesNotThrow(function () { eval("for([] = ((...a) => {}) in '' ) { }"); }, "Having a lambda function with rest parameter as initializer should not assert and is a valid syntax");
       assert.doesNotThrow(function () { eval("[[[] = [function () { }] ] = []]"); }, "Nested array has array pattern which has function expression is a valid syntax");
       assert.doesNotThrow(function () { eval("var a = ({x = 1}) => x;"); }, "Lambda has Object destructuring as parameter which has initializer on shorthand is a valid syntax");
+      assert.doesNotThrow(function () { eval("var a = (b, {x = 1}) => x;"); }, "Lambda has Object destructuring as a second parameter which has initializer on shorthand is a valid syntax");
+      assert.doesNotThrow(function () { eval("var a = ({x = 1}, b) => x;"); }, "Lambda has Object destructuring as first parameter which has initializer on shorthand is a valid syntax");
+      assert.throws(function () { eval("let a = ({name = 'foo'}, 1) = {}"); }, ReferenceError, "Object shorthand will behave as pattern when on left-hand side and should not throw syntax error");
     }
   },
   {
@@ -246,15 +249,15 @@ var tests = [
   {
     name: "Rest as pattern at param with arguments/eval at function body",
     body: function () {
-        (function ([a, b], c, ...{rest1, rest2}) {
+        (function ([a, b], c, ...{'0': rest1, '1': rest2}) {
             eval("");
             assert.areEqual(rest1, 4);
             assert.areEqual(rest2, 5);
             assert.areEqual(c, 3);
             assert.areEqual(arguments[1], 3);
-        })([1, 2], 3, {rest1:4, rest2:5});
+        })([1, 2], 3, 4, 5);
 
-        (function ([a, b], c, ...{rest1, rest2}) {
+        (function ([a, b], c, ...{'0': rest1, '1': rest2}) {
             (function () {
                 assert.areEqual(rest1, 4);
                 assert.areEqual(rest2, 5);
@@ -262,7 +265,7 @@ var tests = [
             })();
             eval("");
             assert.areEqual(arguments[0], [1, 2]);
-        })([1, 2], 3, {rest1:4, rest2:5});
+        })([1, 2], 3, 4, 5);
     }
   },
   {
@@ -364,10 +367,6 @@ var tests = [
   {
     name: "Destructuring pattern at param has nested blocks.",
     body: function () {
-        assert.doesNotThrow(function () { eval("var e = 1;       ( {abcdef  = ((((({})) = (1))))} = (e)) => {  try{ } catch(e) {}}") }, "Should not throw when the default value and it's initializer both have extra parentheses.");
-
-        assert.doesNotThrow(function () { eval("var e = 1;       ( {ghijkl  = ((((({})) =  1 )))} = (e)) => {  try{ } catch(e) {}}") }, "Should not throw when the default value has extra parentheses.");
-
         assert.doesNotThrow(function () { eval("var e = 1; ( {mnopqrs = (((  {}   = (1))))} = (e)) => {  try{ } catch(e) {}}") }, "Should not throw when the default value initializer has extra parentheses.");
 
         assert.doesNotThrow(function () { eval("var e = 1; ( {tuvwxy  = (((  {}   =  1 )))} = (e)) => {  try{ } catch(e) {}}") }, "Should not throw when the default value and initializer are wrapped in extra parentheses.");
@@ -493,6 +492,42 @@ var tests = [
         var it = gn();
         var k = it.next();
         assert.areEqual(2, k.value, "next should invoke the yield in the generator and which yields 2");
+    }
+  },
+  {
+    name: "re-parsing the expression in pattern should work fine",
+    body: function () {
+        function test1(){
+
+          function bar() { this.x = ({ y1: { z1:z1 = ((arguments)) } } = {}); { } }
+          for (var y in {}) { };
+        };
+        test1();
+    }
+  },
+  {
+    name: "Invalid destructuring patterns should be early errors",
+    body: function () {
+        assert.throws(function () {
+            eval("if (false) { [11] += [1, 2, 3] }");
+        }, SyntaxError, "", "Invalid left-hand side in assignment.");
+        assert.throws(function () {
+            eval("if (false) { [11] = [1, 2, 3] }");
+        }, SyntaxError, "", "Destructuring expressions can only have identifier references");
+    }
+  },
+  {
+    name: "Destructuring expression : Array expression instead of name ",
+    body: function () {
+        function test1(){
+            assert.throws(function () { eval("({a: b => []} = [2])") }, SyntaxError, 
+                "", "Unexpected operator in destructuring expression");
+            
+            assert.throws(function () { eval("for([a => {}] in []);") }, SyntaxError,
+                "", "Unexpected operator in destructuring expression");
+                        
+        };
+        test1();
     }
   }
 ];

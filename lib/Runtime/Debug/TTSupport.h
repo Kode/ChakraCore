@@ -62,7 +62,7 @@ namespace TTD
     class TTDebuggerSourceLocation;
 }
 
-void _NOINLINE __declspec(noreturn) TTDAbort_fatal_error(const char* msg);
+void _NOINLINE __declspec(noreturn) TTDAbort_unrecoverable_error(const char* msg);
 
 ////////
 //Memory allocators used by the TT code
@@ -250,6 +250,7 @@ namespace TTD
             SnapPromiseResolveOrRejectFunctionObject,
             SnapPromiseReactionTaskFunctionObject,
             SnapPromiseAllResolveElementFunctionObject,
+            SnapPromiseAllSettledResolveOrRejectElementFunctionObject,
             SnapGeneratorFunction,
             SnapGeneratorVirtualScriptFunction,
             SnapAsyncFunction,

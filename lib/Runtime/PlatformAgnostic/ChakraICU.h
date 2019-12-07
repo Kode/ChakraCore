@@ -12,7 +12,7 @@
 // even if that isn't necessarily true
 #pragma push_macro("NTDDI_VERSION")
 #undef NTDDI_VERSION
-#define NTDDI_VERSION NTDDI_WIN10_RS3
+#define NTDDI_VERSION NTDDI_WIN10_RS5
 #include <icu.h>
 #pragma pop_macro("NTDDI_VERSION")
 #else
@@ -22,9 +22,11 @@
 #include "unicode/udat.h"
 #include "unicode/udatpg.h"
 #include "unicode/uloc.h"
+#include "unicode/ulocdata.h"
 #include "unicode/unumsys.h"
 #include "unicode/ustring.h"
 #include "unicode/unorm2.h"
+#include "unicode/upluralrules.h"
 #endif
 
 // Different assertion code is used in ChakraFull that enforces that messages are char literals

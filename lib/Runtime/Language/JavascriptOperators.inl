@@ -31,7 +31,7 @@ namespace Js
 #endif
         else
         {
-            return JavascriptOperators::GetTypeId(RecyclableObject::UnsafeFromVar(aValue));
+            return JavascriptOperators::GetTypeId(UnsafeVarTo<RecyclableObject>(aValue));
         }
     }
 
@@ -51,7 +51,7 @@ namespace Js
 #endif
         else
         {
-            auto typeId = RecyclableObject::FromVar(aValue)->GetTypeId();
+            auto typeId = VarTo<RecyclableObject>(aValue)->GetTypeId();
             return typeId;
         }
     }
@@ -62,6 +62,7 @@ namespace Js
     {
         Var nextItem = nullptr;
         bool shouldCallReturn = false;
+        JavascriptExceptionObject *exception = nullptr;
         try
         {
             while (JavascriptOperators::IteratorStepAndValue(iterator, scriptContext, &nextItem))
@@ -73,13 +74,17 @@ namespace Js
         }
         catch (const JavascriptException& err)
         {
-            JavascriptExceptionObject * exceptionObj = err.GetAndClear();
+            exception = err.GetAndClear();
+        }
+
+        if (exception != nullptr)
+        {
             if (shouldCallReturn)
             {
                 // Closing the iterator
                 JavascriptOperators::IteratorClose(iterator, scriptContext);
             }
-            JavascriptExceptionOperators::DoThrow(exceptionObj, scriptContext);
+            JavascriptExceptionOperators::DoThrowCheckClone(exception, scriptContext);
         }
     }
 
@@ -155,9 +160,9 @@ namespace Js
     }
 
     template <typename Fn>
-    Var JavascriptOperators::NewObjectCreationHelper_ReentrancySafe(RecyclableObject* constructor, Var defaultConstructor, ThreadContext * threadContext, Fn newObjectCreationFunction)
+    Var JavascriptOperators::NewObjectCreationHelper_ReentrancySafe(RecyclableObject* constructor, bool isDefaultConstructor, ThreadContext * threadContext, Fn newObjectCreationFunction)
     {
-        if (constructor != defaultConstructor)
+        if (!isDefaultConstructor)
         {
             return threadContext->ExecuteImplicitCall(constructor, Js::ImplicitCall_Accessor, [=]()->Js::Var
             {
@@ -166,7 +171,11 @@ namespace Js
         }
         else
         {
-            return newObjectCreationFunction();
+            BEGIN_SAFE_REENTRANT_CALL(threadContext)
+            {
+                return newObjectCreationFunction();
+            }
+            END_SAFE_REENTRANT_CALL
         }
     }
 }

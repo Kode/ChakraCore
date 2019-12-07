@@ -62,6 +62,7 @@ var controllerObj = (function () {
         // Discard all known globals to reduce baseline noise.
         [
             "#__proto__",
+            "globalThis",
             "Array",
             "ArrayBuffer",
             "Atomics",
@@ -383,6 +384,8 @@ var controllerObj = (function () {
                                 if (bpName == "none") {
                                     exceptionAttributes = 0; // JsDiagBreakOnExceptionAttributeNone
                                 } else if (bpName == "uncaught") {
+                                    exceptionAttributes = 0x1; // JsDiagBreakOnExceptionAttributeUncaught
+                                } else if (bpName == "firstchance") {
                                     exceptionAttributes = 0x2; // JsDiagBreakOnExceptionAttributeFirstChance
                                 } else if (bpName == "all") {
                                     exceptionAttributes = 0x1 | 0x2; // JsDiagBreakOnExceptionAttributeUncaught | JsDiagBreakOnExceptionAttributeFirstChance

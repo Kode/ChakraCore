@@ -60,6 +60,7 @@ namespace Js
         Field(ProfileId) arrayCallSiteCount;
         Field(ProfileId) slotInfoCount;
         Field(ProfileId) callSiteInfoCount;
+        Field(ProfileId) callApplyTargetInfoCount;
         Field(ProfileId) returnTypeInfoCount;
         Field(ProfileId) divCount;
         Field(ProfileId) switchCount;
@@ -84,6 +85,30 @@ namespace Js
         }
     };
 
+    struct CallbackInfo
+    {
+        bool CanInlineCallback(Js::ArgSlot argIndex)
+        {
+            return canInlineCallback && argNumber == argIndex;
+        }
+
+        // False if there is more than one ArgIn that is a function object or a function object with arg number greater than MaxInlineeArgoutCount
+        Field(uint8) canInlineCallback : 1;
+
+        Field(uint8) isPolymorphic : 1;
+
+        // Used to correlate from callee's ArgIn to this ArgOut
+        Field(uint8) argNumber : 5;
+        static_assert(Js::InlineeCallInfo::MaxInlineeArgoutCount < (1 << 5), "Ensure CallbackInfo::argNumber is large enough to hold all inline arguments");
+
+        Field(uint16) callSiteId;
+
+        Field(Js::SourceId) sourceId;
+        Field(Js::LocalFunctionId) functionId;
+    };
+
+    using CallbackInfoList = SList<CallbackInfo*, Recycler, RealCount>;
+
     struct CallSiteInfo
     {
         Field(ValueType) returnType;
@@ -104,7 +129,6 @@ namespace Js
             _u_type() {}
         } u;
     };
-
 
     // TODO: include ImplicitCallFlags in this structure
     struct LoopFlags
@@ -436,9 +460,13 @@ namespace Js
         void RecordAsmJsCallSiteInfo(FunctionBody* callerBody, ProfileId callSiteId, FunctionBody* calleeBody);
 #endif
         void RecordCallSiteInfo(FunctionBody* functionBody, ProfileId callSiteId, FunctionInfo * calleeFunctionInfo, JavascriptFunction* calleeFunction, uint actualArgCount, bool isConstructorCall, InlineCacheIndex ldFldInlineCacheId = Js::Constants::NoInlineCacheIndex);
-        void RecordConstParameterAtCallSite(ProfileId callSiteId, int argNum);
+        void RecordCallApplyTargetInfo(FunctionBody* functionBody, ProfileId callSiteId, FunctionInfo * targetFunctionInfo, JavascriptFunction* targetFunction);
+        void RecordParameterAtCallSite(FunctionBody * functionBody, ProfileId callSiteId, Var arg, int argNum, Js::RegSlot regSlot);
         static bool HasCallSiteInfo(FunctionBody* functionBody);
         bool HasCallSiteInfo(FunctionBody* functionBody, ProfileId callSiteId); // Does a particular callsite have ProfileInfo?
+        FunctionInfo * GetCallbackInfo(FunctionBody * functionBody, ProfileId callSiteId);
+        FunctionInfo * GetCallApplyTargetInfo(FunctionBody * functionBody, ProfileId callSiteId);
+        bool MayHaveNonBuiltinCallee(ProfileId callSiteId);
         FunctionInfo * GetCallSiteInfo(FunctionBody* functionBody, ProfileId callSiteId, bool *isConstructorCall, bool *isPolymorphicCall);
         CallSiteInfo * GetCallSiteInfo() const { return callSiteInfo; }
         uint16 GetConstantArgInfo(ProfileId callSiteId);
@@ -507,6 +535,7 @@ namespace Js
         // Replaced with the function body it is verified and matched (See DynamicProfileInfo::MatchFunctionBody)
         Field(DynamicProfileFunctionInfo *) dynamicProfileFunctionInfo;
         Field(CallSiteInfo *) callSiteInfo;
+        Field(CallSiteInfo *) callApplyTargetInfo;
         Field(ValueType *) returnTypeInfo; // return type of calls for non inline call sites
         Field(ValueType *) divideTypeInfo;
         Field(ValueType *) switchTypeInfo;
@@ -568,6 +597,7 @@ namespace Js
             Field(bool) disableStackArgOpt : 1;
             Field(bool) disableTagCheck : 1;
             Field(bool) disableOptimizeTryFinally : 1;
+            Field(bool) disableFieldPRE : 1;
         };
         Field(Bits) bits;
 
@@ -580,6 +610,8 @@ namespace Js
 #if DBG
         Field(bool) persistsAcrossScriptContexts;
 #endif
+
+        static CriticalSection callSiteInfoCS;
 
         static JavascriptMethod EnsureDynamicProfileInfo(Js::ScriptFunction * function);
 #if DBG_DUMP
@@ -595,12 +627,15 @@ namespace Js
 
         static void DumpLoopInfo(FunctionBody *fbody);
 #endif
+        CallbackInfo * FindCallbackInfo(FunctionBody * funcBody, ProfileId callSiteId);
+        CallbackInfo * EnsureCallbackInfo(FunctionBody * funcBody, ProfileId callSiteId);
 
         bool IsPolymorphicCallSite(Js::LocalFunctionId curFunctionId, Js::SourceId curSourceId, Js::LocalFunctionId oldFunctionId, Js::SourceId oldSourceId);
         void CreatePolymorphicDynamicProfileCallSiteInfo(FunctionBody * funcBody, ProfileId callSiteId, Js::LocalFunctionId functionId, Js::LocalFunctionId oldFunctionId, Js::SourceId sourceId, Js::SourceId oldSourceId);
         void ResetPolymorphicCallSiteInfo(ProfileId callSiteId, Js::LocalFunctionId functionId);
         void SetFunctionIdSlotForNewPolymorphicCall(ProfileId callSiteId, Js::LocalFunctionId curFunctionId, Js::SourceId curSourceId, Js::FunctionBody *inliner);
         void RecordPolymorphicCallSiteInfo(FunctionBody* functionBody, ProfileId callSiteId, FunctionInfo * calleeFunctionInfo);
+
 #ifdef RUNTIME_DATA_COLLECTION
         static CriticalSection s_csOutput;
         template <typename T>
@@ -649,6 +684,9 @@ namespace Js
         DynamicProfileInfo(FunctionBody * functionBody);
 
         friend class SourceDynamicProfileManager;
+
+        static FunctionInfo * GetFunctionInfo(FunctionBody * functionBody, Js::SourceId sourceId, Js::LocalFunctionId functionId);
+        static void GetSourceAndFunctionId(FunctionBody * functionBody, FunctionInfo * calleeFunctionInfo, JavascriptFunction * calleeFunction, Js::SourceId * sourceId, Js::LocalFunctionId * functionId);
 
     public:
         bool IsAggressiveIntTypeSpecDisabled(const bool isJitLoopBody) const
@@ -868,6 +906,8 @@ namespace Js
         void DisableTagCheck() { this->bits.disableTagCheck = true; }
         bool IsOptimizeTryFinallyDisabled() const { return bits.disableOptimizeTryFinally; }
         void DisableOptimizeTryFinally() { this->bits.disableOptimizeTryFinally = true; }
+        bool IsFieldPREDisabled() const { return bits.disableFieldPRE; }
+        void DisableFieldPRE() { this->bits.disableFieldPRE = true; }
 
         static bool IsCallSiteNoInfo(Js::LocalFunctionId functionId) { return functionId == CallSiteNoInfo; }
         int IncRejitCount() { return this->rejitCount++; }

@@ -2,6 +2,12 @@
 <regress-exe>
   <test>
     <default>
+      <files>LabelFuncAsWithStmt.js</files>
+      <baseline>LabelFuncAsWithStmt.baseline</baseline>
+    </default>
+  </test>
+  <test>
+    <default>
       <files>apply.js</files>
       <baseline>apply.baseline</baseline>
     </default>
@@ -87,6 +93,12 @@
   </test>
   <test>
     <default>
+      <files>funcAndboundFuncLength.js</files>
+      <compile-flags>-args summary -endargs</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
       <files>call1.js</files>
       <baseline>call1.baseline</baseline>
     </default>
@@ -142,7 +154,7 @@
   <test>
     <default>
       <files>defernested.js</files>
-      <compile-flags>-Force:Deferparse -DeferNested</compile-flags>
+      <compile-flags>-Force:Deferparse</compile-flags>
       <baseline>defernested.baseline</baseline>
     </default>
   </test>
@@ -216,6 +228,11 @@
   </test>
   <test>
     <default>
+      <files>deleteProperty.js</files>
+    </default>
+  </test>
+  <test>
+    <default>
       <files>newFunction.js</files>
       <baseline>newFunction.baseline</baseline>
     </default>
@@ -228,6 +245,11 @@
   </test>
   <test>
     <default>
+      <files>prototype_set.js</files>
+    </default>
+  </test>
+  <test>
+    <default>
       <files>TApply1.js</files>
       <baseline>TApply1.baseline</baseline>
     </default>
@@ -236,6 +258,37 @@
     <default>
       <files>toString.js</files>
       <baseline>toString.baseline</baseline>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>toStringAll.js</files>
+      <baseline>toStringAll.baseline</baseline>
+      <tags>exclude_jshost</tags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>toStringAll.js</files>
+      <baseline>toStringAll.baseline</baseline>
+      <compile-flags>-force:DeferParse</compile-flags>
+      <tags>exclude_jshost</tags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>toStringAll.js</files>
+      <baseline>toStringAll.baseline</baseline>
+      <compile-flags>-force:DeferParse -ForceSerialized</compile-flags>
+      <tags>exclude_jshost</tags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>toStringAll.js</files>
+      <baseline>toStringAll.baseline</baseline>
+      <compile-flags>-force:DeferParse -UseParserStateCache -ParserStateCache</compile-flags>
+      <tags>exclude_jshost</tags>
     </default>
   </test>
   <test>
@@ -394,6 +447,19 @@
   </test>
   <test>
     <default>
+      <files>stackArgsLenConstOpt.js</files>
+      <compile-flags>-mic:1 -off:simpleJit -testtrace:StackArgLenConstOpt</compile-flags>
+      <tags>exclude_dynapogo,exclude_nonative,require_backend,exclude_forceserialized,exclude_arm64</tags>
+      <baseline>stackArgsLenConstOpt.baseline</baseline>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>stackArgsWithInlineeBailOut.js</files>
+    </default>
+  </test>
+  <test>
+    <default>
       <files>childCallsEvalJitLoopBody.js</files>
       <baseline />
       <compile-flags>-prejit</compile-flags>
@@ -447,6 +513,13 @@
     <default>
       <files>redefer-f-i-b-eval.js</files>
       <compile-flags>-force:deferparse -force:redeferral</compile-flags>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>bug_os17698041.js</files>
+      <compile-flags>-off:deferparse -force:redeferral -collectgarbage -parserstatecache -useparserstatecache</compile-flags>
+      <tags>exclude_jshost</tags>
     </default>
   </test>
 </regress-exe>

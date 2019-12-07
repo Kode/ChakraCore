@@ -177,4 +177,38 @@ testRunner.runTests([
             pairs.forEach((pair) => test(pair[0], pair[1]));
         }
     },
+    {
+        name: "https://github.com/Microsoft/ChakraCore/issues/5097",
+        body() {
+            const cases = [0, 1, true, false, null, undefined, { toString() { return "hello!" }}, [1, 2, 3, 4], {}, new (class ToStringTag { get [Symbol.toStringTag]() { return "MyClass" } })];
+
+            const coll = new Intl.Collator();
+            cases.forEach((test) => {
+                assert.areEqual(0, ("" + test).localeCompare(test), `${test} did not compare equal to itself using String.prototype.localeCompare`);
+                assert.areEqual(0, coll.compare("" + test, test), `${test} did not compare equal to itself using Collator.prototype.compare`);
+            });
+        }
+    },
+    {
+        name: "Usage option should be respected",
+        body() {
+            if (WScript.Platform.INTL_LIBRARY === "winglob") {
+                return;
+            }
+
+            function test(locale, usage, expectedLocale, expectedUsage, expectedCollation, expectedArray) {
+                const input = ["AE", "A", "B", "Ä"];
+                const collator = new Intl.Collator(locale, { usage });
+                assert.areEqual(expectedLocale, collator.resolvedOptions().locale);
+                assert.areEqual(expectedUsage, collator.resolvedOptions().usage);
+                assert.areEqual(expectedCollation, collator.resolvedOptions().collation);
+                assert.areEqual(expectedArray, input.sort(collator.compare).join(","));
+            }
+
+            test("de", "sort", "de", "sort", "default", "A,Ä,AE,B");
+            test("de", "search", "de", "search", "default", "A,AE,Ä,B");
+            test("de-u-co-phonebk", "sort", "de-u-co-phonebk", "sort", "phonebk", "A,AE,Ä,B");
+            test("de-u-co-phonebk", "search", "de", "search", "default", "A,AE,Ä,B");
+        }
+    }
 ], { verbose: !WScript.Arguments.includes("summary") });

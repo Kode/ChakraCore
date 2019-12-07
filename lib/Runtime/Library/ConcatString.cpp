@@ -134,17 +134,10 @@ namespace Js
             return this->propertyString;
         }
 
-        ScriptContext * scriptContext = this->GetScriptContext();
+        Js::PropertyRecord const * propertyRecord = nullptr;
+        GetPropertyRecordImpl(&propertyRecord);
 
-        if (this->propertyRecord == nullptr)
-        {
-            Js::PropertyRecord const * propertyRecord = nullptr;
-            scriptContext->GetOrAddPropertyRecord(this->GetSz(), static_cast<int>(this->GetLength()),
-                &propertyRecord);
-            this->propertyRecord = propertyRecord;
-        }
-
-        this->propertyString = scriptContext->GetPropertyString(propertyRecord->GetPropertyId());
+        this->propertyString = this->GetScriptContext()->GetPropertyString(propertyRecord->GetPropertyId());
         return this->propertyString;
     }
 
@@ -159,41 +152,68 @@ namespace Js
         }
     }
 
-    /* static */
-    bool LiteralStringWithPropertyStringPtr::Is(RecyclableObject * obj)
+    template <> bool VarIsImpl<LiteralStringWithPropertyStringPtr>(RecyclableObject * obj)
     {
         return VirtualTableInfo<Js::LiteralStringWithPropertyStringPtr>::HasVirtualTable(obj);
     }
 
-    /* static */
-    bool LiteralStringWithPropertyStringPtr::Is(Var var)
-    {
-        return RecyclableObject::Is(var) && LiteralStringWithPropertyStringPtr::Is(RecyclableObject::UnsafeFromVar(var));
-    }
-
     void LiteralStringWithPropertyStringPtr::GetPropertyRecord(_Out_ PropertyRecord const** propRecord, bool dontLookupFromDictionary)
     {
-        *propRecord = nullptr;
-        ScriptContext * scriptContext = this->GetScriptContext();
+        return GetPropertyRecordImpl(propRecord, dontLookupFromDictionary);
+    }
 
-        if (this->propertyRecord == nullptr)
+    void LiteralStringWithPropertyStringPtr::GetPropertyRecordImpl(_Out_ PropertyRecord const** propRecord, bool dontLookupFromDictionary)
+    {
+        if (this->propertyRecord)
         {
-            if (!dontLookupFromDictionary)
-            {
-                // cache PropertyRecord
-                Js::PropertyRecord const * localPropertyRecord;
-                scriptContext->GetOrAddPropertyRecord(this->GetSz(),
-                    static_cast<int>(this->GetLength()),
-                    &localPropertyRecord);
-                this->propertyRecord = localPropertyRecord;
-            }
-            else
-            {
-                return;
-            }
+            *propRecord = this->propertyRecord;
+            return;
         }
 
-        *propRecord = this->propertyRecord;
+        __super::GetPropertyRecord(propRecord, dontLookupFromDictionary);
+
+        if (*propRecord)
+        {
+            CachePropertyRecordImpl(*propRecord);
+        }
+    }
+
+    void LiteralStringWithPropertyStringPtr::CachePropertyRecord(_In_ PropertyRecord const* propertyRecord)
+    {
+        return CachePropertyRecordImpl(propertyRecord);
+    }
+
+    void LiteralStringWithPropertyStringPtr::CachePropertyRecordImpl(_In_ PropertyRecord const* propertyRecord)
+    {
+        this->propertyRecord = propertyRecord;
+        Assert(this->GetLength() == propertyRecord->GetLength());
+
+        // PropertyRecord has its own copy of the string content, so we can drop the reference to our old copy.
+        // This is okay because the PropertyRecord pointer will keep the data alive.
+        this->SetBuffer(propertyRecord->GetBuffer());
+    }
+
+    void const * LiteralStringWithPropertyStringPtr::GetOriginalStringReference()
+    {
+        // If we have a property record, it's the string owner. Otherwise,
+        // the string is guaranteed to itself be an allocation block (as
+        // was asserted during the constructor).
+        return this->propertyRecord != nullptr ? static_cast<const void*>(this->propertyRecord) : this->GetString();
+    }
+
+    RecyclableObject* LiteralStringWithPropertyStringPtr::CloneToScriptContext(ScriptContext* requestContext)
+    {
+        if (this->propertyRecord == nullptr)
+        {
+            // Without a property record, we can safely multi-reference the underlying buffer. Assertions in
+            // the constructor of LiteralString will verify this.
+            return __super::CloneToScriptContext(requestContext);
+        }
+
+        // We have a property record, so go ahead and make this be a property string in the request context.
+        // The strings in both contexts will refer to the same property record, since property records are
+        // shared among all script contexts on a thead.
+        return requestContext->GetPropertyString(this->propertyRecord);
     }
 
     /////////////////////// ConcatStringBase //////////////////////////
@@ -511,24 +531,9 @@ namespace Js
             scriptContext->GetLibrary()->GetStringTypeStatic());
     }
 
-    bool
-    ConcatStringMulti::Is(Var var)
+    template <> bool VarIsImpl<ConcatStringMulti>(RecyclableObject* obj)
     {
-        return VirtualTableInfo<ConcatStringMulti>::HasVirtualTable(var);
-    }
-
-    ConcatStringMulti *
-    ConcatStringMulti::FromVar(Var var)
-    {
-        AssertOrFailFast(ConcatStringMulti::Is(var));
-        return static_cast<ConcatStringMulti *>(var);
-    }
-
-    ConcatStringMulti *
-    ConcatStringMulti::UnsafeFromVar(Var var)
-    {
-        Assert(ConcatStringMulti::Is(var));
-        return static_cast<ConcatStringMulti *>(var);
+        return VirtualTableInfo<ConcatStringMulti>::HasVirtualTable(obj);
     }
 
     const char16 *

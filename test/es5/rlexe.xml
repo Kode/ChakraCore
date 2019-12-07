@@ -84,6 +84,11 @@
   </test>
   <test>
     <default>
+      <files>ObjLitGetSet3.js</files>
+    </default>
+  </test>
+  <test>
+    <default>
       <files>ObjLitGetSetParseOnly.js</files>
       <baseline>ObjLitGetSetParseOnly.baseline</baseline>
     </default>
@@ -105,13 +110,11 @@
   <test>
     <default>
       <files>seal.js</files>
-      <baseline>seal.baseline</baseline>
     </default>
   </test>
   <test>
     <default>
       <files>freeze.js</files>
-      <baseline>freeze.baseline</baseline>
     </default>
   </test>
   <test>
@@ -185,16 +188,6 @@
     <default>
       <files>hasItem.js</files>
       <baseline>hasItem.baseline</baseline>
-      <!-- Bug 16538950: jshost - adapt the ch change to support printing strings with U+0000 (NULL) -->
-      <tags>exclude_jshost</tags>
-    </default>
-  </test>
-  <test>
-    <default>
-      <files>hasItem.js</files>
-      <baseline>hasItem.jshost.baseline</baseline>
-      <!-- Bug 16538950: jshost - adapt the ch change to support printing strings with U+0000 (NULL) -->
-      <tags>exclude_ch</tags>
     </default>
   </test>
   <test>
@@ -360,6 +353,11 @@
   <test>
     <default>
       <files>es5_defineProperty_arrayLength.js</files>
+    </default>
+  </test>
+  <test>
+    <default>
+      <files>strictdefaultsetter.js</files>
     </default>
   </test>
 </regress-exe>

@@ -42,10 +42,10 @@ namespace Js
         isRootModule(false),
         hadNotifyHostReady(false),
         localExportSlots(nullptr),
-        numPendingChildrenModule(0),
         moduleId(InvalidModuleIndex),
         localSlotCount(InvalidSlotCount),
         promise(nullptr),
+        importMetaObject(nullptr),
         localExportCount(0)
     {
         namespaceRecord.module = this;
@@ -140,7 +140,7 @@ namespace Js
 
                 Utf8SourceInfo* pResultSourceInfo = nullptr;
                 this->parseTree = scriptContext->ParseScript(parser, sourceText,
-                    sourceLength, srcInfo, &se, &pResultSourceInfo, _u("module"),
+                    sourceLength, srcInfo, &se, &pResultSourceInfo, Constants::ModuleCode,
                     loadScriptFlag, &sourceIndex, nullptr);
                 this->pSourceInfo = pResultSourceInfo;
             }
@@ -171,6 +171,9 @@ namespace Js
                     {
                         *exceptionVar = this->errorObject;
                     }
+
+                    // Cleanup in case of error.
+                    this->ReleaseParserResourcesForHierarchy();
                     return E_FAIL;
                 }
             }
@@ -187,6 +190,8 @@ namespace Js
                 }
                 *exceptionVar = JavascriptError::CreateFromCompileScriptException(scriptContext, &se, sourceUrl);
             }
+            // Cleanup in case of error.
+            this->ReleaseParserResourcesForHierarchy();
             if (this->parser)
             {
                 this->parseTree = nullptr;
@@ -200,15 +205,14 @@ namespace Js
 
             if (this->promise != nullptr)
             {
-                SourceTextModuleRecord::ResolveOrRejectDynamicImportPromise(false, this->errorObject, this->scriptContext, this);
+                SourceTextModuleRecord::ResolveOrRejectDynamicImportPromise(false, this->errorObject, this->scriptContext, this, false);
             }
 
             // Notify host if current module is dynamically-loaded module, or is root module and the host hasn't been notified
-            bool isScriptActive = scriptContext->GetThreadContext()->IsScriptActive();
             if (this->promise != nullptr || (isRootModule && !hadNotifyHostReady))
             {
                 OUTPUT_TRACE_DEBUGONLY(Js::ModulePhase, _u("\t>NotifyHostAboutModuleReady %s (ParseSource error)\n"), this->GetSpecifierSz());
-                LEAVE_SCRIPT_IF(scriptContext, isScriptActive,
+                LEAVE_SCRIPT_IF_ACTIVE(scriptContext,
                 {
                     scriptContext->GetHostScriptContext()->NotifyHostAboutModuleReady(this, this->errorObject);
                 });
@@ -225,6 +229,11 @@ namespace Js
 
     void SourceTextModuleRecord::NotifyParentsAsNeeded()
     {
+        if (notifying)
+        {
+            return;
+        }
+        notifying = true;
         // Notify the parent modules that this child module is either in fault state or finished.
         if (this->parentModuleList != nullptr)
         {
@@ -233,6 +242,7 @@ namespace Js
                 parentModule->OnChildModuleReady(this, this->errorObject);
             });
         }
+        notifying = false;
         SetParentsNotified();
     }
 
@@ -240,11 +250,32 @@ namespace Js
     {
         Assert(scriptContext->GetConfig()->IsES6ModuleEnabled());
         ParseNodeModule* moduleParseNode = this->parseTree->AsParseNodeModule();
-        SetrequestedModuleList(moduleParseNode->requestedModules);
+        SetRequestedModuleList(moduleParseNode->requestedModules);
         SetImportRecordList(moduleParseNode->importEntries);
         SetStarExportRecordList(moduleParseNode->starExportEntries);
         SetIndirectExportRecordList(moduleParseNode->indirectExportEntries);
         SetLocalExportRecordList(moduleParseNode->localExportEntries);
+    }
+
+    void SourceTextModuleRecord::ReleaseParserResources()
+    {
+        if (this->parser != nullptr)
+        {
+            this->parser->ReleaseTemporaryGuestArena();
+        }
+    }
+
+    void SourceTextModuleRecord::ReleaseParserResourcesForHierarchy()
+    {
+        this->ReleaseParserResources();
+
+        if (this->childrenModuleSet != nullptr)
+        {
+            this->childrenModuleSet->EachValue([=](SourceTextModuleRecord* childModuleRecord)
+            {
+                childModuleRecord->ReleaseParserResources();
+            });
+        }
     }
 
     HRESULT SourceTextModuleRecord::PostParseProcess()
@@ -258,6 +289,12 @@ namespace Js
         {
             hr = PrepareForModuleDeclarationInitialization();
         }
+        else
+        {
+            // Cleanup in case of error.
+            this->ReleaseParserResourcesForHierarchy();
+        }
+
         return hr;
     }
 
@@ -284,16 +321,16 @@ namespace Js
 
                 if (this->errorObject != nullptr)
                 {
-                    SourceTextModuleRecord::ResolveOrRejectDynamicImportPromise(false, this->errorObject, scriptContext, this);
+                    // Cleanup in case of error.
+                    this->ReleaseParserResourcesForHierarchy();
+                    SourceTextModuleRecord::ResolveOrRejectDynamicImportPromise(false, this->errorObject, scriptContext, this, false);
                 }
                 else
                 {
                     if (!hadNotifyHostReady && !WasEvaluated())
                     {
-                        bool isScriptActive = scriptContext->GetThreadContext()->IsScriptActive();
-
                         OUTPUT_TRACE_DEBUGONLY(Js::ModulePhase, _u("\t>NotifyHostAboutModuleReady %s (PostProcessDynamicModuleImport)\n"), this->GetSpecifierSz());
-                        LEAVE_SCRIPT_IF(scriptContext, isScriptActive,
+                        LEAVE_SCRIPT_IF_ACTIVE(scriptContext,
                         {
                             hr = scriptContext->GetHostScriptContext()->NotifyHostAboutModuleReady(this, this->errorObject);
                         });
@@ -305,6 +342,9 @@ namespace Js
 
             if (FAILED(hr))
             {
+                // Cleanup in case of error.
+                this->ReleaseParserResourcesForHierarchy();
+
                 // We cannot just use the buffer in the specifier string - need to make a copy here.
                 const char16* moduleName = this->GetSpecifierSz();
                 size_t length = wcslen(moduleName);
@@ -318,7 +358,7 @@ namespace Js
             }
         }
 
-        return this->promise;
+        return JavascriptPromise::CreatePassThroughPromise(this->promise, scriptContext);
     }
 
     HRESULT SourceTextModuleRecord::PrepareForModuleDeclarationInitialization()
@@ -326,7 +366,7 @@ namespace Js
         OUTPUT_TRACE_DEBUGONLY(Js::ModulePhase, _u("PrepareForModuleDeclarationInitialization(%s)\n"), this->GetSpecifierSz());
         HRESULT hr = NO_ERROR;
 
-        if (numPendingChildrenModule == 0)
+        if (ConfirmChildrenParsed())
         {
             OUTPUT_TRACE_DEBUGONLY(Js::ModulePhase, _u("\t>NotifyParentsAsNeeded\n"));
             NotifyParentsAsNeeded();
@@ -336,17 +376,23 @@ namespace Js
                 // TODO: move this as a promise call? if parser is called from a different thread
                 // We'll need to call the bytecode gen in the main thread as we are accessing GC.
                 ScriptContext* scriptContext = GetScriptContext();
-                bool isScriptActive = scriptContext->GetThreadContext()->IsScriptActive();
-                Assert(!isScriptActive || this->promise != nullptr);
+                Assert(!scriptContext->GetThreadContext()->IsScriptActive() || this->promise != nullptr);
 
                 if (ModuleDeclarationInstantiation())
                 {
                     GenerateRootFunction();
                 }
+
+                if (this->errorObject != nullptr)
+                {
+                    // Cleanup in case of error.
+                    this->ReleaseParserResourcesForHierarchy();
+                }
+
                 if (!hadNotifyHostReady && !WasEvaluated())
                 {
                     OUTPUT_TRACE_DEBUGONLY(Js::ModulePhase, _u("\t>NotifyHostAboutModuleReady %s (PrepareForModuleDeclarationInitialization)\n"), this->GetSpecifierSz());
-                    LEAVE_SCRIPT_IF(scriptContext, isScriptActive,
+                    LEAVE_SCRIPT_IF_ACTIVE(scriptContext,
                     {
                         hr = scriptContext->GetHostScriptContext()->NotifyHostAboutModuleReady(this, this->errorObject);
                     });
@@ -355,12 +401,6 @@ namespace Js
                 }
             }
         }
-#if DBG
-        else
-        {
-            OUTPUT_TRACE_DEBUGONLY(Js::ModulePhase, _u("\tnumPendingChildrenModule=(%d)\n"), numPendingChildrenModule);
-        }
-#endif
         return hr;
     }
 
@@ -376,20 +416,21 @@ namespace Js
                 this->errorObject = childException;
             }
 
+            // Cleanup in case of error.
+            this->ReleaseParserResourcesForHierarchy();
+
             OUTPUT_TRACE_DEBUGONLY(Js::ModulePhase, _u("\t>NotifyParentAsNeeded (childException)\n"), this->GetSpecifierSz());
             NotifyParentsAsNeeded();
 
-            bool isScriptActive = scriptContext->GetThreadContext()->IsScriptActive();
-
             if (this->promise != nullptr)
             {
-                SourceTextModuleRecord::ResolveOrRejectDynamicImportPromise(false, this->errorObject, this->scriptContext, this);
+                SourceTextModuleRecord::ResolveOrRejectDynamicImportPromise(false, this->errorObject, this->scriptContext, this, false);
             }
 
             if (this->promise != nullptr || (isRootModule && !hadNotifyHostReady))
             {
                 OUTPUT_TRACE_DEBUGONLY(Js::ModulePhase, _u("\t>NotifyHostAboutModuleReady %s (OnChildModuleReady)\n"), this->GetSpecifierSz());
-                LEAVE_SCRIPT_IF(scriptContext, isScriptActive,
+                LEAVE_SCRIPT_IF_ACTIVE(scriptContext,
                 {
                     hr = scriptContext->GetHostScriptContext()->NotifyHostAboutModuleReady(this, this->errorObject);
                 });
@@ -399,12 +440,6 @@ namespace Js
         }
         else
         {
-            if (numPendingChildrenModule == 0)
-            {
-                return NOERROR; // this is only in case of recursive module reference. Let the higher stack frame handle this module.
-            }
-            numPendingChildrenModule--;
-
             hr = PrepareForModuleDeclarationInitialization();
         }
         return hr;
@@ -620,24 +655,28 @@ namespace Js
                 SourceTextModuleRecord* childModuleRecord = GetChildModuleRecord(exportEntry.moduleRequest->Psz());
                 if (childModuleRecord == nullptr)
                 {
+                    this->ReleaseParserResourcesForHierarchy();
                     JavascriptError::ThrowReferenceError(scriptContext, JSERR_CannotResolveModule, exportEntry.moduleRequest->Psz());
                 }
-                else
+
+                if (exportEntry.importName->GetPropertyId() == PropertyIds::star_)
                 {
-                    isAmbiguous = !childModuleRecord->ResolveExport(importNameId, resolveSet, exportRecord);
-                    if (isAmbiguous)
-                    {
-                        // ambiguous; don't need to search further
-                        return true;
-                    }
-                    else
-                    {
-                        // found a resolution. done;
-                        if (*exportRecord != nullptr)
-                        {
-                            return true;
-                        }
-                    }
+                    // export * as someName from "foo"
+                    *exportRecord = childModuleRecord->GetNamespaceNameRecord();
+                    return true;
+                }
+
+                isAmbiguous = !childModuleRecord->ResolveExport(importNameId, resolveSet, exportRecord);
+                if (isAmbiguous)
+                {
+                    // ambiguous; don't need to search further
+                    return true;
+                }
+
+                // found a resolution. done;
+                if (*exportRecord != nullptr)
+                {
+                    return true;
                 }
                 return false;
             });
@@ -653,9 +692,6 @@ namespace Js
 
         if (exportName == PropertyIds::default_)
         {
-            JavascriptError* errorObj = scriptContext->GetLibrary()->CreateSyntaxError();
-            JavascriptError::SetErrorMessage(errorObj, JSERR_ModuleResolveExport, scriptContext->GetPropertyName(exportName)->GetBuffer(), scriptContext);
-            this->errorObject = errorObj;
             return false;
         }
 
@@ -668,10 +704,12 @@ namespace Js
                 SourceTextModuleRecord* childModule = GetChildModuleRecord(starExportEntry.moduleRequest->Psz());
                 if (childModule == nullptr)
                 {
+                    this->ReleaseParserResourcesForHierarchy();
                     JavascriptError::ThrowReferenceError(GetScriptContext(), JSERR_CannotResolveModule, starExportEntry.moduleRequest->Psz());
                 }
                 if (childModule->errorObject != nullptr)
                 {
+                    this->ReleaseParserResourcesForHierarchy();
                     JavascriptExceptionOperators::Throw(childModule->errorObject, GetScriptContext());
                 }
 
@@ -715,21 +753,52 @@ namespace Js
         {
             parentRecord->childrenModuleSet->AddNew(moduleName, this);
 
-            if (!this->WasParsed())
+            if (this->parentModuleList == nullptr)
             {
-                if (this->parentModuleList == nullptr)
-                {
-                    Recycler* recycler = GetScriptContext()->GetRecycler();
-                    this->parentModuleList = RecyclerNew(recycler, ModuleRecordList, recycler);
-                }
+                Recycler* recycler = GetScriptContext()->GetRecycler();
+                this->parentModuleList = RecyclerNew(recycler, ModuleRecordList, recycler);
+            }
 
-                if (!this->parentModuleList->Contains(parentRecord))
-                {
-                    this->parentModuleList->Add(parentRecord);
-                    parentRecord->numPendingChildrenModule++;
-                }
+            if (!this->parentModuleList->Contains(parentRecord))
+            {
+                this->parentModuleList->Add(parentRecord);
             }
         }
+    }
+
+    bool SourceTextModuleRecord::ConfirmChildrenParsed()
+    {
+        if (!this->WasParsed())
+        {
+            return false;
+        }
+        if (confirmedReady || this->ParentsNotified())
+        {
+            return true;
+        }
+        bool result = true;
+        confirmedReady = true;
+        EnsureChildModuleSet(GetScriptContext());
+        childrenModuleSet->EachValue([&](SourceTextModuleRecord* childModuleRecord) {
+            if (childModuleRecord->ParentsNotified())
+            {
+                return false;
+            }
+            else
+            {
+                if (childModuleRecord->ConfirmChildrenParsed())
+                {
+                    return false;
+                }
+                else
+                {
+                    result = false;
+                    return true;
+                }
+            }
+        });
+        confirmedReady = false;
+        return result;
     }
 
     void SourceTextModuleRecord::EnsureChildModuleSet(ScriptContext *scriptContext)
@@ -751,16 +820,9 @@ namespace Js
         if (requestedModuleList != nullptr)
         {
             EnsureChildModuleSet(scriptContext);
-            ArenaAllocator* allocator = scriptContext->GeneralAllocator();
-            SList<LPCOLESTR> * moduleRecords = Anew(allocator, SList<LPCOLESTR>, allocator);
 
-            // Reverse the order for the host. So, host can read the files top-down
             requestedModuleList->MapUntil([&](IdentPtr specifier) {
                 LPCOLESTR moduleName = specifier->Psz();
-                return !moduleRecords->Prepend(moduleName);
-            });
-
-            moduleRecords->MapUntil([&](LPCOLESTR moduleName) {
                 ModuleRecordBase* moduleRecordBase = nullptr;
                 SourceTextModuleRecord* moduleRecord = nullptr;
                 bool itemFound = childrenModuleSet->TryGetValue(moduleName, &moduleRecord);
@@ -787,7 +849,6 @@ namespace Js
                 }
                 return false;
             });
-            moduleRecords->Clear();
 
             if (FAILED(hr))
             {
@@ -820,7 +881,7 @@ namespace Js
         OUTPUT_TRACE_DEBUGONLY(Js::ModulePhase, _u("ModuleDeclarationInstantiation(%s)\n"), this->GetSpecifierSz());
         ScriptContext* scriptContext = GetScriptContext();
 
-        if (this->WasDeclarationInitialized())
+        if (this->WasDeclarationInitialized() || this->errorObject != nullptr)
         {
             return false;
         }
@@ -856,8 +917,6 @@ namespace Js
 
         if (this->errorObject != nullptr)
         {
-            OUTPUT_TRACE_DEBUGONLY(Js::ModulePhase, _u("\t>NotifyParentsAsNeeded (errorObject)\n"));
-            NotifyParentsAsNeeded();
             return false;
         }
 
@@ -880,7 +939,12 @@ namespace Js
         Assert(this->WasDeclarationInitialized());
         Assert(this == scriptContext->GetLibrary()->GetModuleRecord(this->pSourceInfo->GetSrcInfo()->moduleID));
 
-        this->rootFunction = scriptContext->GenerateRootFunction(parseTree, sourceIndex, this->parser, this->pSourceInfo->GetParseFlags(), &se, _u("module"));
+        this->rootFunction = scriptContext->GenerateRootFunction(parseTree, sourceIndex, this->parser, this->pSourceInfo->GetParseFlags(), &se, Constants::ModuleCode);
+
+        // Parser uses a temporary guest arena to keep regex patterns alive. We need to release this arena only after we have no further use
+        // for the regex pattern objects.
+        this->ReleaseParserResources();
+
         if (rootFunction == nullptr)
         {
             const WCHAR * sourceUrl = nullptr;
@@ -907,9 +971,24 @@ namespace Js
         }
     }
 
-    Var SourceTextModuleRecord::ModuleEvaluation()
+    bool SourceTextModuleRecord::ModuleEvaluationPrepass()
     {
-        OUTPUT_TRACE_DEBUGONLY(Js::ModulePhase, _u("ModuleEvaluation(%s)\n"), this->GetSpecifierSz());
+        if (this->errorObject != nullptr)
+        {
+            // Cleanup in case of error.
+            this->ReleaseParserResourcesForHierarchy();
+
+            if (this->promise != nullptr)
+            {
+                SourceTextModuleRecord::ResolveOrRejectDynamicImportPromise(false, this->errorObject, this->scriptContext, this, false);
+                return false;
+            }
+            else
+            {
+                JavascriptExceptionOperators::Throw(errorObject, this->scriptContext);
+            }
+        }
+        SetEvaluationPrepassed();
 
 #if DBG
         if (childrenModuleSet != nullptr)
@@ -921,50 +1000,38 @@ namespace Js
             });
         }
 #endif
-        if (!scriptContext->GetConfig()->IsES6ModuleEnabled() || WasEvaluated())
-        {
-            return nullptr;
-        }
 
-        if (this->errorObject != nullptr)
-        {
-            if (this->promise != nullptr)
-            {
-                SourceTextModuleRecord::ResolveOrRejectDynamicImportPromise(false, this->errorObject, this->scriptContext, this);
-                return scriptContext->GetLibrary()->GetUndefined();
-            }
-            else
-            {
-                JavascriptExceptionOperators::Throw(errorObject, this->scriptContext);
-            }
-        }
-
-        Assert(this->errorObject == nullptr);
-        SetWasEvaluated();
-
-        if (childrenModuleSet != nullptr)
-        {
-            childrenModuleSet->EachValue([=](SourceTextModuleRecord* childModuleRecord)
-            {
-                if (!childModuleRecord->WasEvaluated())
-                {
-                    childModuleRecord->ModuleEvaluation();
-                }
-            });
-        }
-        CleanupBeforeExecution();
-
-        Arguments outArgs(CallInfo(CallFlags_Value, 0), nullptr);
-
-        Var ret = nullptr;
         JavascriptExceptionObject *exception = nullptr;
+
         try
         {
-            AUTO_NESTED_HANDLED_EXCEPTION_TYPE((ExceptionType)(ExceptionType_OutOfMemory | ExceptionType_JavascriptException));
-            ENTER_SCRIPT_IF(scriptContext, true, false, false, !scriptContext->GetThreadContext()->IsScriptActive(),
+            if (childrenModuleSet != nullptr)
             {
-                ret = rootFunction->CallRootFunction(outArgs, scriptContext, true);
-            });
+                childrenModuleSet->EachValue([=](SourceTextModuleRecord* childModuleRecord)
+                {
+                    if (!childModuleRecord->WasEvaluationPrepassed())
+                    {
+                        childModuleRecord->ModuleEvaluationPrepass();
+                    }
+ 
+                    // if child module was evaluated before and threw need to re-throw now
+                    // if child module has been dynamically imported and has exception need to throw
+                    if (childModuleRecord->GetErrorObject() != nullptr)
+                    {
+                        this->ReleaseParserResourcesForHierarchy();
+
+                        JavascriptExceptionOperators::Throw(childModuleRecord->GetErrorObject(), this->scriptContext);
+                    }
+                });
+            }
+
+            AUTO_NESTED_HANDLED_EXCEPTION_TYPE((ExceptionType)(ExceptionType_OutOfMemory | ExceptionType_JavascriptException));
+            BEGIN_SAFE_REENTRANT_CALL(scriptContext->GetThreadContext())
+            {
+                Arguments outArgs(CallInfo(CallFlags_Value, 0), nullptr);
+                this->generator = VarTo<JavascriptGenerator>(rootFunction->CallRootFunction(outArgs, scriptContext, true));
+            }
+            END_SAFE_REENTRANT_CALL
         }
         catch (const Js::JavascriptException &err)
         {
@@ -974,7 +1041,84 @@ namespace Js
             this->errorObject = errorObject;
             if (this->promise != nullptr)
             {
-                ResolveOrRejectDynamicImportPromise(false, errorObject, scriptContext, this);
+                ResolveOrRejectDynamicImportPromise(false, errorObject, scriptContext, this, false);
+                return false;
+            }
+        }
+
+        if (exception != nullptr)
+        {
+            JavascriptExceptionOperators::DoThrowCheckClone(exception, scriptContext);
+        }
+        return true;
+    }
+
+
+    Var SourceTextModuleRecord::ModuleEvaluation()
+    {
+        OUTPUT_TRACE_DEBUGONLY(Js::ModulePhase, _u("ModuleEvaluation(%s)\n"), this->GetSpecifierSz());
+
+        if (!scriptContext->GetConfig()->IsES6ModuleEnabled() || WasEvaluated())
+        {
+            return nullptr;
+        }
+
+        if (!WasEvaluationPrepassed())
+        {
+            if (!ModuleEvaluationPrepass())
+            {
+                return scriptContext->GetLibrary()->GetUndefined();
+            }
+        }
+
+        Assert(this->errorObject == nullptr);
+        SetWasEvaluated();
+
+        JavascriptExceptionObject *exception = nullptr;
+        Var ret = nullptr;
+
+        try
+        {
+            if (requestedModuleList != nullptr)
+            {
+                requestedModuleList->Reverse();
+                requestedModuleList->Map([&](IdentPtr specifier) {
+                    SourceTextModuleRecord* childModuleRecord = nullptr;
+                    AssertOrFailFast(childrenModuleSet->TryGetValue(specifier->Psz(), &childModuleRecord));
+
+                    childModuleRecord->ModuleEvaluation();
+                    // if child module was evaluated before and threw need to re-throw now
+                    // if child module has been dynamically imported and has exception need to throw
+                    if (childModuleRecord->GetErrorObject() != nullptr)
+                    {
+                        this->ReleaseParserResourcesForHierarchy();
+
+                        JavascriptExceptionOperators::Throw(childModuleRecord->GetErrorObject(), this->scriptContext);
+                    }
+                });
+            }
+            CleanupBeforeExecution();
+
+            JavascriptGenerator* gen = static_cast<JavascriptGenerator*> (generator);
+
+            AUTO_NESTED_HANDLED_EXCEPTION_TYPE((ExceptionType)(ExceptionType_OutOfMemory | ExceptionType_JavascriptException));
+            BEGIN_SAFE_REENTRANT_CALL(scriptContext->GetThreadContext())
+            {
+                ResumeYieldData yieldData(scriptContext->GetLibrary()->GetUndefined(), nullptr);
+                ret = gen->CallGenerator(&yieldData, Constants::ModuleCode);
+                ret = JavascriptOperators::GetProperty(VarTo<RecyclableObject>(ret), PropertyIds::value, scriptContext);
+            }
+            END_SAFE_REENTRANT_CALL
+        }
+        catch (const Js::JavascriptException &err)
+        {
+            exception = err.GetAndClear();
+            Var errorObject = exception->GetThrownObject(scriptContext);
+            AssertOrFailFastMsg(errorObject != nullptr, "ModuleEvaluation: null error object thrown from root function");
+            this->errorObject = errorObject;
+            if (this->promise != nullptr)
+            {
+                ResolveOrRejectDynamicImportPromise(false, errorObject, scriptContext, this, false);
                 return scriptContext->GetLibrary()->GetUndefined();
             }
         }
@@ -986,7 +1130,7 @@ namespace Js
 
         if (this->promise != nullptr)
         {
-            SourceTextModuleRecord::ResolveOrRejectDynamicImportPromise(true, this->GetNamespace(), this->GetScriptContext(), this);
+            SourceTextModuleRecord::ResolveOrRejectDynamicImportPromise(true, this->GetNamespace(), this->GetScriptContext(), this, false);
         }
 
         return ret;
@@ -994,7 +1138,7 @@ namespace Js
 
     HRESULT SourceTextModuleRecord::OnHostException(void* errorVar)
     {
-        if (!RecyclableObject::Is(errorVar))
+        if (!VarIs<RecyclableObject>(errorVar))
         {
             return E_INVALIDARG;
         }
@@ -1082,6 +1226,7 @@ namespace Js
                     // 2G is too big already.
                     if (localExportCount >= INT_MAX)
                     {
+                        this->ReleaseParserResourcesForHierarchy();
                         JavascriptError::ThrowRangeError(scriptContext, JSERR_TooManyImportExports);
                     }
                     localExportCount++;
@@ -1105,6 +1250,7 @@ namespace Js
                         currentSlotCount++;
                         if (currentSlotCount >= INT_MAX)
                         {
+                            this->ReleaseParserResourcesForHierarchy();
                             JavascriptError::ThrowRangeError(scriptContext, JSERR_TooManyImportExports);
                         }
                     }
@@ -1126,7 +1272,7 @@ namespace Js
 #if ENABLE_NATIVE_CODEGEN
             if (JITManager::GetJITManager()->IsOOPJITEnabled() && JITManager::GetJITManager()->IsConnected())
             {
-                PSCRIPTCONTEXT_HANDLE remoteScriptContext = this->scriptContext->GetRemoteScriptAddr();
+                PSCRIPTCONTEXT_HANDLE remoteScriptContext = this->scriptContext->GetRemoteScriptAddr(false);
                 if (remoteScriptContext)
                 {
                     HRESULT hr = JITManager::GetJITManager()->AddModuleRecordInfo(
@@ -1167,8 +1313,9 @@ namespace Js
                     this->errorObject = errorObj;
                     return;
                 }
-                if (!childModuleRecord->ResolveExport(propertyId, nullptr, &exportRecord) ||
-                    (exportRecord == nullptr))
+                if (propertyId != PropertyIds::star_ &&
+                    (!childModuleRecord->ResolveExport(propertyId, nullptr, &exportRecord) ||
+                    (exportRecord == nullptr)))
                 {
                     JavascriptError* errorObj = scriptContext->GetLibrary()->CreateSyntaxError();
                     JavascriptError::SetErrorMessage(errorObj, JSERR_ModuleResolveExport, exportEntry.exportName->Psz(), scriptContext);
@@ -1212,7 +1359,7 @@ namespace Js
     }
 
     // static
-    Var SourceTextModuleRecord::ResolveOrRejectDynamicImportPromise(bool isResolve, Var value, ScriptContext *scriptContext, SourceTextModuleRecord *moduleRecord)
+    Var SourceTextModuleRecord::ResolveOrRejectDynamicImportPromise(bool isResolve, Var value, ScriptContext *scriptContext, SourceTextModuleRecord *moduleRecord, bool useReturn)
     {
         bool isScriptActive = scriptContext->GetThreadContext()->IsScriptActive();
         JavascriptPromise *promise = nullptr;
@@ -1241,8 +1388,32 @@ namespace Js
         if (moduleRecord != nullptr)
         {
             moduleRecord->SetPromise(nullptr);
+            if (useReturn)
+            {
+                return JavascriptPromise::CreatePassThroughPromise(promise, scriptContext);
+            }
+        }
+        return promise;
+    }
+
+    Var SourceTextModuleRecord::GetImportMetaObject()
+    {
+        if (this->importMetaObject)
+        {
+            return this->importMetaObject;
         }
 
-        return promise;
+        ScriptContext* scriptContext = this->GetScriptContext();
+        JavascriptLibrary* library = scriptContext->GetLibrary();
+
+        this->importMetaObject = library->CreateObject(library->GetNull());
+
+        OUTPUT_TRACE_DEBUGONLY(Js::ModulePhase, _u("InitializeImportMeta %s\n"), this->GetSpecifierSz());
+        LEAVE_SCRIPT_IF_ACTIVE(scriptContext,
+        {
+            scriptContext->GetHostScriptContext()->InitializeImportMeta(this, this->importMetaObject);
+        });
+
+        return this->importMetaObject;
     }
 }

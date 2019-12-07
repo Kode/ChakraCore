@@ -67,6 +67,7 @@ bool Js::Amd64StackFrame::Next()
     if (hasCallerContext)
     {
         *currentContext = *callerContext;
+        this->addressOfCodeAddr = this->GetAddressOfReturnAddress();
         OnCurrentContextUpdated();
         return true;
     }
@@ -253,7 +254,7 @@ CONTEXT* Js::Amd64ContextsManager::Allocate()
 
     default:
         AssertMsg(false, "Unexpected usage of JavascriptStackWalker. We run out of CONTEXTs on amd64.");
-        Amd64StackWalkerOutOfContexts_fatal_error((ULONG_PTR)this);
+        Amd64StackWalkerOutOfContexts_unrecoverable_error((ULONG_PTR)this);
     }
 
     AnalysisAssert(pair);

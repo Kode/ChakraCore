@@ -21,6 +21,16 @@ namespace Wasm
         bool IsEnabled();
     };
 
+    namespace WasmNontrapping
+    {
+        bool IsEnabled();
+    };
+
+    namespace SignExtends
+    {
+        bool IsEnabled();
+    };
+
     namespace WasmTypes
     {
         enum WasmType
@@ -32,12 +42,66 @@ namespace Wasm
             F32 = 3,
             F64 = 4,
 #ifdef ENABLE_WASM_SIMD
-            M128 = 5,
+            V128 = 5,
 #endif
             Limit,
             Ptr,
-            Any
+            Any,
+
+            FirstLocalType = I32,
+            AllLocalTypes = 
+                  1 << I32
+                | 1 << I64
+                | 1 << F32
+                | 1 << F64
+#ifdef ENABLE_WASM_SIMD
+                | 1 << V128
+#endif
         };
+
+        namespace SwitchCaseChecks
+        {
+            template<WasmType... T>
+            struct bv;
+
+            template<>
+            struct bv<>
+            {
+                static constexpr uint value = 0;
+            };
+
+            template<WasmType... K>
+            struct bv<Limit, K...>
+            {
+                static constexpr uint value = bv<K...>::value;
+            };
+
+            template<WasmType K1, WasmType... K>
+            struct bv<K1, K...>
+            {
+                static constexpr uint value = (1 << K1) | bv<K...>::value;
+            };
+        }
+
+#ifdef ENABLE_WASM_SIMD
+#define WASM_V128_CHECK_TYPE Wasm::WasmTypes::V128
+#else
+#define WASM_V128_CHECK_TYPE Wasm::WasmTypes::Limit
+#endif
+
+        template<WasmType... T>
+        __declspec(noreturn) void CompileAssertCases()
+        {
+            CompileAssertMsg(SwitchCaseChecks::bv<T...>::value == AllLocalTypes, "WasmTypes missing in switch-case");
+            AssertOrFailFastMsg(UNREACHED, "The WasmType case should have been handled");
+        }
+
+        template<WasmType... T>
+        void CompileAssertCasesNoFailFast()
+        {
+            CompileAssertMsg(SwitchCaseChecks::bv<T...>::value == AllLocalTypes, "WasmTypes missing in switch-case");
+            AssertMsg(UNREACHED, "The WasmType case should have been handled");
+        }
 
         extern const char16* const strIds[Limit];
 

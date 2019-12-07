@@ -4,6 +4,7 @@
 //-------------------------------------------------------------------------------------------------------
 #include "RuntimeBasePch.h"
 #include "FunctionExecutionStateMachine.h"
+#include "Warnings.h"
 
 namespace Js
 {
@@ -23,27 +24,67 @@ namespace Js
         lastInterpretedCount(0)
 #if DBG
         ,initializedExecutionModeAndLimits(false)
+        ,hasBeenReinitialized(false)
+#ifdef ENABLE_SCRIPT_DEBUGGING
+        ,initDebuggerMode(DebuggerMode::NotDebugging)
+        ,reinitDebuggerMode(DebuggerMode::NotDebugging)
+#endif
 #endif
     {
+    }
+
+    uint16 FunctionExecutionStateMachine::GetDefaultAutoProfilingInterpreter0Limit(bool isCoroutine) const {
+        return isCoroutine ? 0 : static_cast<uint16>(Configuration::Global.flags.AutoProfilingInterpreter0Limit);
+    }
+
+    uint16 FunctionExecutionStateMachine::GetDefaultProfilingInterpreter0Limit(bool isCoroutine) const {
+        if (isCoroutine)
+        {
+            return static_cast<uint16>(Configuration::Global.flags.AutoProfilingInterpreter0Limit) +
+                static_cast<uint16>(Configuration::Global.flags.AutoProfilingInterpreter1Limit);
+        }
+
+        return static_cast<uint16>(Configuration::Global.flags.ProfilingInterpreter0Limit);
+    }
+
+    uint16 FunctionExecutionStateMachine::GetDefaultAutoProfilingInterpreter1Limit(bool isCoroutine) const {
+        return isCoroutine ? 0 : static_cast<uint16>(Configuration::Global.flags.AutoProfilingInterpreter1Limit);
+    }
+
+    uint16 FunctionExecutionStateMachine::GetDefaultSimpleJitLimit(bool isCoroutine) const {
+        return static_cast<uint16>(Configuration::Global.flags.SimpleJitLimit);
+    }
+
+    uint16 FunctionExecutionStateMachine::GetDefaultProfilingInterpreter1Limit(bool isCoroutine) const {
+        return static_cast<uint16>(Configuration::Global.flags.ProfilingInterpreter1Limit);
     }
 
     void FunctionExecutionStateMachine::InitializeExecutionModeAndLimits(FunctionBody* functionBody)
     {
 #if DBG
-        initializedExecutionModeAndLimits = true;
+#ifdef ENABLE_SCRIPT_DEBUGGING
+        if (!initializedExecutionModeAndLimits)
+        {
+            initDebuggerMode = functionBody->GetDebuggerMode();
+        }
+#endif
+        initializedExecutionModeAndLimits = true;        
 #endif
         // Assert we're either uninitialized, or being reinitialized on the same FunctionBody
         Assert(owner == nullptr || owner == functionBody);
         owner = functionBody;
 
-        const ConfigFlagsTable &configFlags = Configuration::Global.flags;
+        // AutoProfilingInterpreter might decide to not profile on the first run. For generator
+        // functions, that means we will miss the profiling information on the first run when we resume
+        // back to the function.
+        const bool isCoroutine = functionBody->SkipAutoProfileForCoroutine();
 
-        interpreterLimit = 0;
-        autoProfilingInterpreter0Limit = static_cast<uint16>(configFlags.AutoProfilingInterpreter0Limit);
-        profilingInterpreter0Limit = static_cast<uint16>(configFlags.ProfilingInterpreter0Limit);
-        autoProfilingInterpreter1Limit = static_cast<uint16>(configFlags.AutoProfilingInterpreter1Limit);
-        simpleJitLimit = static_cast<uint16>(configFlags.SimpleJitLimit);
-        profilingInterpreter1Limit = static_cast<uint16>(configFlags.ProfilingInterpreter1Limit);
+        interpreterLimit               = 0;
+        autoProfilingInterpreter0Limit = GetDefaultAutoProfilingInterpreter0Limit(isCoroutine);
+        profilingInterpreter0Limit     = GetDefaultProfilingInterpreter0Limit(isCoroutine);
+        autoProfilingInterpreter1Limit = GetDefaultAutoProfilingInterpreter1Limit(isCoroutine);
+        simpleJitLimit                 = GetDefaultSimpleJitLimit(isCoroutine);
+        profilingInterpreter1Limit     = GetDefaultProfilingInterpreter1Limit(isCoroutine);
 
         // Based on which execution modes are disabled, calculate the number of additional iterations that need to be covered by
         // the execution mode that will scale with the full JIT threshold
@@ -91,14 +132,8 @@ namespace Js
             profilingInterpreter1Limit = 0;
         }
 
-        uint16 fullJitThresholdConfig =
-            static_cast<uint16>(
-                configFlags.AutoProfilingInterpreter0Limit +
-                configFlags.ProfilingInterpreter0Limit +
-                configFlags.AutoProfilingInterpreter1Limit +
-                configFlags.SimpleJitLimit +
-                configFlags.ProfilingInterpreter1Limit);
-        if (!configFlags.EnforceExecutionModeLimits)
+        uint16 fullJitThresholdConfig = GetDefaultFullJitThreshold(isCoroutine);
+        if (!Configuration::Global.flags.EnforceExecutionModeLimits)
         {
             /*
             Scale the full JIT threshold based on some heuristics:
@@ -148,8 +183,23 @@ namespace Js
         TryTransitionToNextInterpreterExecutionMode();
     }
 
+    uint16 FunctionExecutionStateMachine::GetDefaultFullJitThreshold(bool isCoroutine) const
+    {
+        return GetDefaultAutoProfilingInterpreter0Limit(isCoroutine) +
+            GetDefaultProfilingInterpreter0Limit(isCoroutine) +
+            GetDefaultAutoProfilingInterpreter1Limit(isCoroutine) +
+            GetDefaultSimpleJitLimit(isCoroutine) +
+            GetDefaultProfilingInterpreter1Limit(isCoroutine);
+    }
+
     void FunctionExecutionStateMachine::ReinitializeExecutionModeAndLimits(FunctionBody* functionBody)
     {
+#if DBG
+        hasBeenReinitialized = true;
+#ifdef ENABLE_SCRIPT_DEBUGGING
+        reinitDebuggerMode = functionBody->GetDebuggerMode();
+#endif
+#endif
         // TODO: Investigate what it would take to make this invariant hold. Currently fails in AsmJS tests
         // Assert(initializedExecutionModeAndLimits);
 
