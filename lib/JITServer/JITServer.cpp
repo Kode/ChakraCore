@@ -146,7 +146,7 @@ ServerConnectProcessWithProcessHandle(
     return ProcessContextManager::RegisterNewProcess(clientPid, targetHandle, chakraBaseAddress, crtBaseAddress);
 }
 
-#if !(WINVER >= _WIN32_WINNT_WINBLUE)
+#if !(WINVER >= _WIN32_WINNT_WINBLUE) || true
 HRESULT
 ServerConnectProcess(
     handle_t binding,
