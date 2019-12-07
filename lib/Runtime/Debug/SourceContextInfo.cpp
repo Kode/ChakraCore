@@ -4,6 +4,7 @@
 //-------------------------------------------------------------------------------------------------------
 #include "RuntimeDebugPch.h"
 #include "Language/SourceDynamicProfileManager.h"
+#include "Language/SimpleDataCacheWrapper.h"
 
 using namespace Js;
 
@@ -41,7 +42,7 @@ bool SourceContextInfo::IsSourceProfileLoaded() const
 
 SourceContextInfo* SourceContextInfo::Clone(Js::ScriptContext* scriptContext) const
 {
-    IActiveScriptDataCache* profileCache = NULL;
+    Js::SimpleDataCacheWrapper* profileCache = NULL;
     
 #if ENABLE_PROFILE_INFO
     if (this->sourceDynamicProfileManager != NULL)

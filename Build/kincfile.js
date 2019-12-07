@@ -72,7 +72,9 @@ project.addIncludeDirs(
 	'../lib/Common/Memory',
 	'../lib/Runtime/Language',
 	'../lib/wabt',
-	'../lib/wabt/chakra/windows'
+	'../lib/wabt/chakra/windows',
+	'../lib/JITClient',
+	'../lib/SCACore'
 );
 
 if (platform !== Platform.Windows) {

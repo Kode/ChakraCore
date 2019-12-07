@@ -18,10 +18,10 @@
 #define _WIN32_WINNT 0x603
 #endif
 
- NDEBUG
+#ifdef NDEBUG
 #include "Release/ChakraJIT_c.c"
 #else
 #include "Debug/ChakraJIT_c.c"
-#endi
+#endif
 
 #pragma warning(pop)
