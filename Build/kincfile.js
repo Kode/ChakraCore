@@ -32,6 +32,7 @@ await project.addProject('../lib/Runtime/Base');
 await project.addProject('../lib/WasmReader');
 //await project.addProject('../bin/GCStress');
 await project.addProject('../lib/Runtime/PlatformAgnostic');
+await project.addProject('../lib/SCACore');
 if (platform === Platform.Windows) {
 	await project.addProject('../lib/JITClient');
 	await project.addProject('../lib/JITServer');
