@@ -17,6 +17,7 @@
 // System ABI. At entry of JavascriptMethod the stack layout is:
 //      [Return Address] [function] [callInfo] [arg0] [arg1] ...
 //
+void* _AddressOfReturnAddress();
 #define DECLARE_ARGS_VARARRAY_N(va, n)                              \
     Js::Var* va = _get_va(_AddressOfReturnAddress(), n);            \
     Assert(*reinterpret_cast<Js::CallInfo*>(va - 1) == callInfo)
