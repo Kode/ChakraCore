@@ -1782,7 +1782,6 @@ Lowerer::LowerRange(IR::Instr *instrStart, IR::Instr *instrEnd, bool defaultDoFa
             }
             //fallthrough
         case Js::OpCode::Ld_A:
-        case Js::OpCode::InitConst:
             if (instr->IsJitProfilingInstr() && instr->AsJitProfilingInstr()->isBeginSwitch) {
                 LowerProfiledBeginSwitch(instr->AsJitProfilingInstr());
                 break;
@@ -2962,44 +2961,12 @@ Lowerer::LowerRange(IR::Instr *instrStart, IR::Instr *instrEnd, bool defaultDoFa
             break;
         }
 
-        case Js::OpCode::Await:
+        case Js::OpCode::NewAwaitObject:
         {
-            IR::Opnd *srcOpnd1 = instr->UnlinkSrc1();
-            IR::Opnd *srcOpnd2 = instr->UnlinkSrc2();
+            IR::Opnd *src1Opnd = instr->UnlinkSrc1();
             LoadScriptContext(instr);
-            m_lowererMD.LoadHelperArgument(instr, srcOpnd2);
-            m_lowererMD.LoadHelperArgument(instr, srcOpnd1);
-            m_lowererMD.ChangeToHelperCall(instr, IR::HelperAwait);
-            break;
-        }
-
-        case Js::OpCode::AsyncYield:
-        {
-            IR::Opnd *srcOpnd1 = instr->UnlinkSrc1();
-            IR::Opnd *srcOpnd2 = instr->UnlinkSrc2();
-            LoadScriptContext(instr);
-            m_lowererMD.LoadHelperArgument(instr, srcOpnd2);
-            m_lowererMD.LoadHelperArgument(instr, srcOpnd1);
-            m_lowererMD.ChangeToHelperCall(instr, IR::HelperAsyncYield);
-            break;
-        }
-
-        case Js::OpCode::AsyncYieldIsReturn:
-        {
-            IR::Opnd *srcOpnd1 = instr->UnlinkSrc1();
-            m_lowererMD.LoadHelperArgument(instr, srcOpnd1);
-            m_lowererMD.ChangeToHelperCall(instr, IR::HelperAsyncYieldIsReturn);
-            break;
-        }
-
-        case Js::OpCode::AsyncYieldStar:
-        {
-            IR::Opnd *srcOpnd1 = instr->UnlinkSrc1();
-            IR::Opnd *srcOpnd2 = instr->UnlinkSrc2();
-            LoadScriptContext(instr);
-            m_lowererMD.LoadHelperArgument(instr, srcOpnd2);
-            m_lowererMD.LoadHelperArgument(instr, srcOpnd1);
-            m_lowererMD.ChangeToHelperCall(instr, IR::HelperAsyncYieldStar);
+            m_lowererMD.LoadHelperArgument(instr, src1Opnd);
+            m_lowererMD.ChangeToHelperCall(instr, IR::HelperNewAwaitObject);
             break;
         }
 
@@ -3009,16 +2976,9 @@ Lowerer::LowerRange(IR::Instr *instrStart, IR::Instr *instrEnd, bool defaultDoFa
             break;
         }
 
-        case Js::OpCode::GeneratorLoadResumeYieldData:
+        case Js::OpCode::GeneratorResumeYield:
         {
-            this->m_lowerGeneratorHelper.LowerGeneratorLoadResumeYieldData(instr);
-            break;
-        }
-
-        case Js::OpCode::ResumeYield:
-        case Js::OpCode::ResumeYieldStar:
-        {
-            this->m_lowerGeneratorHelper.LowerResumeGenerator(instr);
+            this->m_lowerGeneratorHelper.LowerGeneratorResumeYield(instr);
             break;
         }
 
@@ -3148,7 +3108,6 @@ Lowerer::LowerRange(IR::Instr *instrStart, IR::Instr *instrEnd, bool defaultDoFa
         case Js::OpCode::GeneratorOutputBailInTraceLabel:
 #endif
         case Js::OpCode::GeneratorBailInLabel:
-        case Js::OpCode::GeneratorResumeYieldLabel:
         case Js::OpCode::GeneratorEpilogueFrameNullOutLabel:
         case Js::OpCode::GeneratorEpilogueNoFrameNullOutLabel:
             Assert(this->m_func->GetJITFunctionBody()->IsCoroutine());
@@ -7134,6 +7093,23 @@ Lowerer::LowerStFld(
     IR::Opnd *dst = stFldInstr->UnlinkDst();
     AssertMsg(dst->IsSymOpnd() && dst->AsSymOpnd()->m_sym->IsPropertySym(), "Expected property sym as dst of field store");
 
+    BailOutInfo * bailOutInfo = nullptr; 
+    bool doCheckLayout = false;
+    IR::PropertySymOpnd * propertySymOpnd = nullptr;
+    if (dst->AsSymOpnd()->IsPropertySymOpnd())
+    {
+        propertySymOpnd = dst->AsPropertySymOpnd();
+        if (stFldInstr->HasBailOutInfo() && !propertySymOpnd->IsTypeCheckSeqCandidate() &&
+                (propertySymOpnd->CantChangeType() || propertySymOpnd->TypeCheckRequired()))
+        {
+            IR::Instr * instrBailTarget = stFldInstr->ShareBailOut();
+            LowerBailTarget(instrBailTarget);
+            doCheckLayout = true;
+            bailOutInfo = stFldInstr->GetBailOutInfo();
+            MapStFldHelper(propertySymOpnd, helperMethod, polymorphicHelperMethod);
+        }
+    }
+
     IR::Opnd * inlineCacheOpnd = nullptr;
     if (withInlineCache)
     {
@@ -7180,9 +7156,131 @@ Lowerer::LowerStFld(
     }
 
     IR::RegOpnd *opndBase = dst->AsSymOpnd()->CreatePropertyOwnerOpnd(m_func);
-    m_lowererMD.ChangeToHelperCall(stFldInstr, helperMethod, labelBailOut, opndBase, dst->AsSymOpnd()->IsPropertySymOpnd() ? dst->AsSymOpnd()->AsPropertySymOpnd() : nullptr, isHelper);
+
+    IR::Instr * callInstr = 
+        m_lowererMD.ChangeToHelperCall(stFldInstr, helperMethod, labelBailOut, opndBase, propertySymOpnd, isHelper);
+
+    if (doCheckLayout)
+    {
+        callInstr->SetDst(IR::RegOpnd::New(TyUint8, bailOutInfo->bailOutFunc));
+        IR::Instr * bailOutInstr = IR::BailOutInstr::New(Js::OpCode::BailOnNotEqual, IR::BailOutFailedTypeCheck, bailOutInfo, bailOutInfo->bailOutFunc);
+        bailOutInstr->SetSrc1(callInstr->GetDst());
+        bailOutInstr->SetSrc2(IR::IntConstOpnd::New(0, TyUint8, bailOutInfo->bailOutFunc));
+        callInstr->InsertAfter(bailOutInstr);
+        bailOutInfo->polymorphicCacheIndex = propertySymOpnd->m_inlineCacheIndex;
+        LowerBailOnEqualOrNotEqual(bailOutInstr, nullptr, nullptr, nullptr, isHelper);
+    }
 
     return instrPrev;
+}
+
+void
+Lowerer::MapStFldHelper(IR::PropertySymOpnd * propertySymOpnd, IR::JnHelperMethod &helperMethod, IR::JnHelperMethod &polymorphicHelperMethod)
+{
+    Assert(propertySymOpnd->CantChangeType() || propertySymOpnd->TypeCheckRequired());
+
+    if (propertySymOpnd->CantChangeType())
+    {
+        switch (helperMethod)
+        {
+            case IR::HelperOp_PatchPutValue:
+                helperMethod = IR::HelperOp_PatchPutValueCantChangeType;
+                polymorphicHelperMethod = IR::HelperOp_PatchPutValuePolymorphicCantChangeType;
+                break;
+            case IR::HelperOp_PatchPutValuePolymorphic:
+                helperMethod = polymorphicHelperMethod = IR::HelperOp_PatchPutValuePolymorphicCantChangeType;
+                break;
+            case IR::HelperOp_PatchPutValueNoLocalFastPath:
+                helperMethod = IR::HelperOp_PatchPutValueNoLocalFastPathCantChangeType;
+                polymorphicHelperMethod = IR::HelperOp_PatchPutValueNoLocalFastPathPolymorphicCantChangeType;
+                break;
+            case IR::HelperOp_PatchPutValueNoLocalFastPathPolymorphic:
+                helperMethod = polymorphicHelperMethod = IR::HelperOp_PatchPutValueNoLocalFastPathPolymorphicCantChangeType;
+                break;
+            case IR::HelperOp_PatchPutValueWithThisPtr:
+                helperMethod = IR::HelperOp_PatchPutValueWithThisPtrCantChangeType;
+                polymorphicHelperMethod = IR::HelperOp_PatchPutValueWithThisPtrPolymorphicCantChangeType;
+                break;
+            case IR::HelperOp_PatchPutValueWithThisPtrPolymorphic:
+                helperMethod = polymorphicHelperMethod = IR::HelperOp_PatchPutValueWithThisPtrPolymorphicCantChangeType;
+                break;
+            case IR::HelperOp_PatchPutValueWithThisPtrNoLocalFastPath:
+                helperMethod = IR::HelperOp_PatchPutValueWithThisPtrNoLocalFastPathCantChangeType;
+                polymorphicHelperMethod = IR::HelperOp_PatchPutValueWithThisPtrNoLocalFastPathPolymorphicCantChangeType;
+                break;
+            case IR::HelperOp_PatchPutValueWithThisPtrNoLocalFastPathPolymorphic:
+                helperMethod = polymorphicHelperMethod = IR::HelperOp_PatchPutValueWithThisPtrNoLocalFastPathPolymorphicCantChangeType;
+                break;
+            case IR::HelperOp_PatchInitValue:
+                helperMethod = IR::HelperOp_PatchInitValueCantChangeType;
+                polymorphicHelperMethod = IR::HelperOp_PatchInitValuePolymorphicCantChangeType;
+                break;
+            case IR::HelperOp_PatchInitValuePolymorphic:
+                helperMethod = polymorphicHelperMethod = IR::HelperOp_PatchInitValuePolymorphicCantChangeType;
+                break;
+            case IR::HelperOp_PatchPutRootValue:
+            case IR::HelperOp_PatchPutRootValuePolymorphic:
+            case IR::HelperOp_PatchPutRootValueNoLocalFastPath:
+            case IR::HelperOp_PatchPutRootValueNoLocalFastPathPolymorphic:
+                // No helper method change is needed here, because the global object doesn't participate in final type opt, so it can't alias
+                // an object that does.
+                break;
+            default:
+                AssertOrFailFast(false);
+                break;
+        }
+    }
+    else
+    {
+        switch (helperMethod)
+        {
+            case IR::HelperOp_PatchPutValue:
+                helperMethod = IR::HelperOp_PatchPutValueCheckLayout;
+                polymorphicHelperMethod = IR::HelperOp_PatchPutValuePolymorphicCheckLayout;
+                break;
+            case IR::HelperOp_PatchPutValuePolymorphic:
+                helperMethod = polymorphicHelperMethod = IR::HelperOp_PatchPutValuePolymorphicCheckLayout;
+                break;
+            case IR::HelperOp_PatchPutValueNoLocalFastPath:
+                helperMethod = IR::HelperOp_PatchPutValueNoLocalFastPathCheckLayout;
+                polymorphicHelperMethod = IR::HelperOp_PatchPutValueNoLocalFastPathPolymorphicCheckLayout;
+                break;
+            case IR::HelperOp_PatchPutValueNoLocalFastPathPolymorphic:
+                helperMethod = polymorphicHelperMethod = IR::HelperOp_PatchPutValueNoLocalFastPathPolymorphicCheckLayout;
+                break;
+            case IR::HelperOp_PatchPutValueWithThisPtr:
+                helperMethod = IR::HelperOp_PatchPutValueWithThisPtrCheckLayout;
+                polymorphicHelperMethod = IR::HelperOp_PatchPutValueWithThisPtrPolymorphicCheckLayout;
+                break;
+            case IR::HelperOp_PatchPutValueWithThisPtrPolymorphic:
+                helperMethod = polymorphicHelperMethod = IR::HelperOp_PatchPutValueWithThisPtrPolymorphicCheckLayout;
+                break;
+            case IR::HelperOp_PatchPutValueWithThisPtrNoLocalFastPath:
+                helperMethod = IR::HelperOp_PatchPutValueWithThisPtrNoLocalFastPathCheckLayout;
+                polymorphicHelperMethod = IR::HelperOp_PatchPutValueWithThisPtrNoLocalFastPathPolymorphicCheckLayout;
+                break;
+            case IR::HelperOp_PatchPutValueWithThisPtrNoLocalFastPathPolymorphic:
+                helperMethod = polymorphicHelperMethod = IR::HelperOp_PatchPutValueWithThisPtrNoLocalFastPathPolymorphicCheckLayout;
+                break;
+            case IR::HelperOp_PatchInitValue:
+                helperMethod = IR::HelperOp_PatchInitValueCheckLayout;
+                polymorphicHelperMethod = IR::HelperOp_PatchInitValuePolymorphicCheckLayout;
+                break;
+            case IR::HelperOp_PatchInitValuePolymorphic:
+                helperMethod = polymorphicHelperMethod = IR::HelperOp_PatchInitValuePolymorphicCheckLayout;
+                break;
+            case IR::HelperOp_PatchPutRootValue:
+            case IR::HelperOp_PatchPutRootValuePolymorphic:
+            case IR::HelperOp_PatchPutRootValueNoLocalFastPath:
+            case IR::HelperOp_PatchPutRootValueNoLocalFastPathPolymorphic:
+                // No helper method change is needed here, because the global object doesn't participate in final type opt, so it can't alias
+                // an object that does.
+                break;
+            default:
+                AssertOrFailFast(false);
+                break;
+        }
+    }
 }
 
 IR::Instr* Lowerer::GenerateCompleteStFld(IR::Instr* instr, bool emitFastPath, IR::JnHelperMethod monoHelperAfterFastPath, IR::JnHelperMethod polyHelperAfterFastPath,
@@ -14061,6 +14159,23 @@ Lowerer::GenerateObjectTestAndTypeLoad(IR::Instr *instrLdSt, IR::RegOpnd *opndBa
     InsertMove(opndType, opndIndir, instrLdSt);
 }
 
+void Lowerer::InsertMoveForPolymorphicCacheIndex(IR::Instr * instr, BailOutInfo * bailOutInfo, int bailOutRecordOffset, uint polymorphicCacheIndexValue)
+{
+    IR::Opnd * indexOpnd = nullptr;
+
+    if (this->m_func->IsOOPJIT())
+    {
+        indexOpnd = IR::IndirOpnd::New(IR::RegOpnd::New(m_func->GetTopFunc()->GetNativeCodeDataSym(), TyVar, m_func), (int)(bailOutRecordOffset + BailOutRecord::GetOffsetOfPolymorphicCacheIndex()), TyUint32, m_func);
+    }
+    else
+    {
+        indexOpnd = IR::MemRefOpnd::New((BYTE*)bailOutInfo->bailOutRecord + BailOutRecord::GetOffsetOfPolymorphicCacheIndex(), TyUint32, this->m_func);
+    }
+
+    InsertMove(
+        indexOpnd, IR::IntConstOpnd::New(polymorphicCacheIndexValue, TyUint32, this->m_func), instr, false);
+}
+
 IR::LabelInstr *
 Lowerer::GenerateBailOut(IR::Instr * instr, IR::BranchInstr * branchInstr, IR::LabelInstr *bailOutLabel, IR::LabelInstr * collectRuntimeStatsLabel)
 {
@@ -14122,23 +14237,19 @@ Lowerer::GenerateBailOut(IR::Instr * instr, IR::BranchInstr * branchInstr, IR::L
             // Generate code to write the cache index into the bailout record before we jump to the call site.
             Assert(bailOutInfo->polymorphicCacheIndex != (uint)-1);
             Assert(bailOutInfo->bailOutRecord);
-            IR::Opnd * indexOpnd = nullptr;
-
-            if (this->m_func->IsOOPJIT())
-            {
-                indexOpnd = IR::IndirOpnd::New(IR::RegOpnd::New(m_func->GetTopFunc()->GetNativeCodeDataSym(), TyVar, m_func), (int)(bailOutRecordOffset + BailOutRecord::GetOffsetOfPolymorphicCacheIndex()), TyUint32, m_func);
-            }
-            else
-            {
-                indexOpnd = IR::MemRefOpnd::New((BYTE*)bailOutInfo->bailOutRecord + BailOutRecord::GetOffsetOfPolymorphicCacheIndex(), TyUint32, this->m_func);
-            }
-
-            InsertMove(
-                indexOpnd, IR::IntConstOpnd::New(bailOutInfo->polymorphicCacheIndex, TyUint32, this->m_func), instr, false);
+            InsertMoveForPolymorphicCacheIndex(instr, bailOutInfo, bailOutRecordOffset, bailOutInfo->polymorphicCacheIndex);
         }
 
         if (bailOutInfo->bailOutRecord->IsShared())
         {
+            // The polymorphicCacheIndex value should be relevant only for field type check bailouts.
+            // In case of a shared bailout record, the polymorphicCacheIndex sticks regardless of the bailout kind being different
+            // from field type check. Therefore, it results in an out-of-bound write while trying to recrod a field access update.
+            if (instr->GetBailOutKind() != IR::BailOutFailedTypeCheck && instr->GetBailOutKind() != IR::BailOutFailedFixedFieldTypeCheck)
+            {
+                InsertMoveForPolymorphicCacheIndex(instr, bailOutInfo, bailOutRecordOffset, (uint)-1);
+            }
+
             IR::Opnd *functionBodyOpnd;
             if (this->m_func->IsOOPJIT())
             {
@@ -25565,6 +25676,8 @@ Lowerer::GenerateLdHomeObj(IR::Instr* instr)
 
     IR::LabelInstr *labelDone = IR::LabelInstr::New(Js::OpCode::Label, func, false);
     IR::LabelInstr *testLabel = IR::LabelInstr::New(Js::OpCode::Label, func, false);
+    IR::LabelInstr *scriptFuncLabel = IR::LabelInstr::New(Js::OpCode::Label, func, false);
+    LABELNAMESET(scriptFuncLabel, "ScriptFunctionWithHomeObj");
     IR::Opnd *opndUndefAddress = this->LoadLibraryValueOpnd(instr, LibraryValue::ValueUndefined);
 
     IR::RegOpnd *instanceRegOpnd = IR::RegOpnd::New(TyMachPtr, func);
@@ -25586,64 +25699,52 @@ Lowerer::GenerateLdHomeObj(IR::Instr* instr)
     if (func->GetJITFunctionBody()->HasHomeObj())
     {
         // Is this a generator function with home obj?
+        if (func->GetJITFunctionBody()->IsCoroutine())
         {
-            IR::LabelInstr* nextCaseLabel = IR::LabelInstr::New(Js::OpCode::Label, func, false);
-            LABELNAMESET(nextCaseLabel, "GeneratorFunctionWithHomeObjAndComputedName");
+            uint32 homeObjectOffset = Js::FunctionWithHomeObj<Js::GeneratorVirtualScriptFunction>::GetOffsetOfHomeObj();
 
-            IR::Opnd* vtableAddressInlineFuncHomObjOpnd = this->LoadVTableValueOpnd(instr, VTableValue::VtableVirtualJavascriptGeneratorFunctionWithHomeObj);
-            IR::BranchInstr* inlineFuncHomObjOpndBr = InsertCompareBranch(IR::IndirOpnd::New(instanceRegOpnd, 0, TyMachPtr, func), vtableAddressInlineFuncHomObjOpnd, Js::OpCode::BrNeq_A, nextCaseLabel, instr);
-            InsertObjectPoison(instanceRegOpnd, inlineFuncHomObjOpndBr, instr, false);
-            IR::IndirOpnd* indirInlineFuncHomeObjOpnd = IR::IndirOpnd::New(instanceRegOpnd, Js::FunctionWithHomeObj<Js::GeneratorVirtualScriptFunction>::GetOffsetOfHomeObj(), TyMachPtr, func);
-            Lowerer::InsertMove(instanceRegOpnd, indirInlineFuncHomeObjOpnd, instr);
+            // Is this a generator function with home obj and computed name?
+            if (func->GetJITFunctionBody()->HasComputedName())
+            {
+                homeObjectOffset = Js::FunctionWithComputedName<Js::FunctionWithHomeObj<Js::GeneratorVirtualScriptFunction>>::GetOffsetOfHomeObj();
+            }
+
+            {
+                IR::IndirOpnd* indirOpnd = IR::IndirOpnd::New(instanceRegOpnd, homeObjectOffset, TyMachPtr, func);
+                Lowerer::InsertMove(instanceRegOpnd, indirOpnd, instr);
+            }
+
             InsertBranch(Js::OpCode::Br, testLabel, instr);
-
-            instr->InsertBefore(nextCaseLabel);
         }
-
-        // Is this a generator function with home obj and computed name?
+        else
         {
-            IR::LabelInstr* nextCaseLabel = IR::LabelInstr::New(Js::OpCode::Label, func, false);
-            LABELNAMESET(nextCaseLabel, "FunctionWithInlineCacheAndHomeObj");
+            IR::RegOpnd* funcObjHasInlineCachesOpnd = IR::RegOpnd::New(TyUint8, instr->m_func);
+            this->InsertMove(funcObjHasInlineCachesOpnd, IR::IndirOpnd::New(instanceRegOpnd, Js::ScriptFunction::GetOffsetOfHasInlineCaches(), TyUint8, instr->m_func), instr);
 
-            IR::Opnd* vtableAddressInlineFuncHomObjOpnd = this->LoadVTableValueOpnd(instr, VTableValue::VtableVirtualJavascriptGeneratorFunctionWithHomeObjAndComputedName);
-            IR::BranchInstr* inlineFuncHomObjOpndBr = InsertCompareBranch(IR::IndirOpnd::New(instanceRegOpnd, 0, TyMachPtr, func), vtableAddressInlineFuncHomObjOpnd, Js::OpCode::BrNeq_A, nextCaseLabel, instr);
-            InsertObjectPoison(instanceRegOpnd, inlineFuncHomObjOpndBr, instr, false);
-            IR::IndirOpnd* indirInlineFuncHomeObjOpnd = IR::IndirOpnd::New(instanceRegOpnd, Js::FunctionWithComputedName<Js::FunctionWithHomeObj<Js::GeneratorVirtualScriptFunction>>::GetOffsetOfHomeObj(), TyMachPtr, func);
-            Lowerer::InsertMove(instanceRegOpnd, indirInlineFuncHomeObjOpnd, instr);
-            InsertBranch(Js::OpCode::Br, testLabel, instr);
-
-            instr->InsertBefore(nextCaseLabel);
-        }
-
-        // Is this an function with inline cache and home obj?
-        {
-            IR::LabelInstr* labelInlineFunc = IR::LabelInstr::New(Js::OpCode::Label, func, false);
-            LABELNAMESET(labelInlineFunc, "FunctionWithInlineCacheHomeObjAndComputedName");
-
-            IR::Opnd* vtableAddressInlineFuncHomObjOpnd = this->LoadVTableValueOpnd(instr, VTableValue::VtableScriptFunctionWithInlineCacheAndHomeObj);
-            IR::BranchInstr* inlineFuncHomObjOpndBr = InsertCompareBranch(IR::IndirOpnd::New(instanceRegOpnd, 0, TyMachPtr, func), vtableAddressInlineFuncHomObjOpnd, Js::OpCode::BrNeq_A, labelInlineFunc, instr);
-            InsertObjectPoison(instanceRegOpnd, inlineFuncHomObjOpndBr, instr, false);
-            IR::IndirOpnd* indirInlineFuncHomeObjOpnd = IR::IndirOpnd::New(instanceRegOpnd, Js::FunctionWithHomeObj<Js::ScriptFunctionWithInlineCache>::GetOffsetOfHomeObj(), TyMachPtr, func);
-            Lowerer::InsertMove(instanceRegOpnd, indirInlineFuncHomeObjOpnd, instr);
-            InsertBranch(Js::OpCode::Br, testLabel, instr);
-
-            instr->InsertBefore(labelInlineFunc);
-        }
-
-        // Is this a function with inline cache, home obj and computed name?
-        {
-            IR::LabelInstr* scriptFuncLabel = IR::LabelInstr::New(Js::OpCode::Label, func, false);
-            LABELNAMESET(scriptFuncLabel, "ScriptFunctionWithHomeObj");
-
-            IR::Opnd* vtableAddressInlineFuncHomObjCompNameOpnd = this->LoadVTableValueOpnd(instr, VTableValue::VtableScriptFunctionWithInlineCacheHomeObjAndComputedName);
-            IR::BranchInstr* inlineFuncHomObjCompNameBr = InsertCompareBranch(IR::IndirOpnd::New(instanceRegOpnd, 0, TyMachPtr, func), vtableAddressInlineFuncHomObjCompNameOpnd, Js::OpCode::BrNeq_A, scriptFuncLabel, instr);
+            IR::BranchInstr* inlineFuncHomObjCompNameBr = InsertTestBranch(funcObjHasInlineCachesOpnd, funcObjHasInlineCachesOpnd, Js::OpCode::BrEq_A, scriptFuncLabel, instr);
             InsertObjectPoison(instanceRegOpnd, inlineFuncHomObjCompNameBr, instr, false);
-            IR::IndirOpnd* indirInlineFuncHomeObjCompNameOpnd = IR::IndirOpnd::New(instanceRegOpnd, Js::FunctionWithComputedName<Js::FunctionWithHomeObj<Js::ScriptFunctionWithInlineCache>>::GetOffsetOfHomeObj(), TyMachPtr, func);
-            Lowerer::InsertMove(instanceRegOpnd, indirInlineFuncHomeObjCompNameOpnd, instr);
-            InsertBranch(Js::OpCode::Br, testLabel, instr);
 
-            instr->InsertBefore(scriptFuncLabel);
+            if (func->GetJITFunctionBody()->HasComputedName())
+            {
+                // Is this a function with inline cache, home obj and computed name?
+                {
+                    IR::IndirOpnd* indirInlineFuncHomeObjCompNameOpnd = IR::IndirOpnd::New(instanceRegOpnd, Js::FunctionWithComputedName<Js::FunctionWithHomeObj<Js::ScriptFunctionWithInlineCache>>::GetOffsetOfHomeObj(), TyMachPtr, func);
+                    Lowerer::InsertMove(instanceRegOpnd, indirInlineFuncHomeObjCompNameOpnd, instr);
+                    InsertBranch(Js::OpCode::Br, testLabel, instr);
+                }
+            }
+            else
+            {
+                // Is this a function with inline cache and home obj?
+                {
+                    IR::IndirOpnd* indirInlineFuncHomeObjOpnd = IR::IndirOpnd::New(instanceRegOpnd, Js::FunctionWithHomeObj<Js::ScriptFunctionWithInlineCache>::GetOffsetOfHomeObj(), TyMachPtr, func);
+                    Lowerer::InsertMove(instanceRegOpnd, indirInlineFuncHomeObjOpnd, instr);
+                    InsertBranch(Js::OpCode::Br, testLabel, instr);
+                }
+            }
         }
+
+        instr->InsertBefore(scriptFuncLabel);
 
         // All other cases
         {
@@ -26552,7 +26653,6 @@ Lowerer::ValidOpcodeAfterLower(IR::Instr* instr, Func * func)
     case Js::OpCode::GeneratorOutputBailInTraceLabel:
 #endif
     case Js::OpCode::GeneratorBailInLabel:
-    case Js::OpCode::GeneratorResumeYieldLabel:
     case Js::OpCode::GeneratorEpilogueFrameNullOutLabel:
     case Js::OpCode::GeneratorEpilogueNoFrameNullOutLabel:
         return func->GetJITFunctionBody()->IsCoroutine();
@@ -29303,7 +29403,7 @@ Lowerer::LowerGeneratorHelper::LowerGeneratorTraceBailIn(IR::Instr* instr)
 #endif
 
 IR::SymOpnd*
-Lowerer::LowerGeneratorHelper::CreateResumeYieldDataOpnd() const
+Lowerer::LowerGeneratorHelper::CreateResumeYieldOpnd() const
 {
     StackSym* resumeYieldDataSym = StackSym::NewImplicitParamSym(4, this->func);
     this->func->SetArgOffset(resumeYieldDataSym, (LowererMD::GetFormalParamOffset() + 1) * MachPtr);
@@ -29311,23 +29411,13 @@ Lowerer::LowerGeneratorHelper::CreateResumeYieldDataOpnd() const
 }
 
 void
-Lowerer::LowerGeneratorHelper::LowerGeneratorLoadResumeYieldData(IR::Instr* instr)
+Lowerer::LowerGeneratorHelper::LowerGeneratorResumeYield(IR::Instr* instr)
 {
-    // prm2 is the ResumeYieldData pointer per calling convention established in JavascriptGenerator::CallGenerator
+    // prm2 is the resume yield object var per calling convention established in JavascriptGenerator::CallGenerator
     // This is the value the bytecode expects to be in the dst register of the Yield opcode after resumption.
     // Load it here after the bail-in.
-    this->lowerer->InsertMove(instr->UnlinkDst(), this->CreateResumeYieldDataOpnd(), instr);
+    this->lowerer->InsertMove(instr->UnlinkDst(), this->CreateResumeYieldOpnd(), instr);
     instr->Unlink();
-}
-
-void
-Lowerer::LowerGeneratorHelper::LowerResumeGenerator(IR::Instr* instr)
-{
-    IR::Opnd* srcOpnd1 = instr->UnlinkSrc1();
-    IR::Opnd* srcOpnd2 = instr->m_opcode == Js::OpCode::ResumeYieldStar ? instr->UnlinkSrc2() : IR::AddrOpnd::NewNull(this->func);
-    this->lowererMD.LoadHelperArgument(instr, srcOpnd2);
-    this->lowererMD.LoadHelperArgument(instr, srcOpnd1);
-    this->lowererMD.ChangeToHelperCall(instr, IR::HelperResumeYield);
 }
 
 void

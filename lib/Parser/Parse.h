@@ -553,8 +553,6 @@ private:
         if (buildAST)
         {
             pnode->grfnop = 0;
-            pnode->pnodeOuter = (NULL == m_pstmtCur) ? NULL : m_pstmtCur->pnodeStmt;
-
             pStmt->pnodeStmt = pnode;
         }
         else
@@ -977,6 +975,7 @@ private:
 
     void CheckIfImportOrExportStatementValidHere();
     bool IsTopLevelModuleFunc();
+    void MakeModuleAsync();
 
     template<bool buildAST> ParseNodePtr ParseImport();
     template<bool buildAST> void ParseImportClause(ModuleImportOrExportEntryList* importEntryList, bool parsingAfterComma = false);
@@ -1018,7 +1017,6 @@ private:
 
     void AppendToList(ParseNodePtr * node, ParseNodePtr nodeToAppend);
 
-    bool IsES6DestructuringEnabled() const;
     bool IsPossiblePatternStart() const { return m_token.tk == tkLCurly || m_token.tk == tkLBrack; }
     bool IsPostFixOperators() const
     {

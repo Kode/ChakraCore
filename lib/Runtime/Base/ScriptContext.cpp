@@ -1066,6 +1066,7 @@ namespace Js
         Output::Print(_u("    SetIterator                    %8d   %8d\n"), typeCount[TypeIds_SetIterator], instanceCount[TypeIds_SetIterator]);
         Output::Print(_u("    StringIterator                 %8d   %8d\n"), typeCount[TypeIds_StringIterator], instanceCount[TypeIds_StringIterator]);
         Output::Print(_u("    Generator                      %8d   %8d\n"), typeCount[TypeIds_Generator], instanceCount[TypeIds_Generator]);
+        Output::Print(_u("    AsyncGenerator                 %8d   %8d\n"), typeCount[TypeIds_AsyncGenerator], instanceCount[TypeIds_AsyncGenerator]);
 #if !DBG
         Output::Print(_u("    ** Instance statistics only available on debug builds...\n"));
 #endif
@@ -2900,7 +2901,7 @@ ExitTempAllocator:
         return success;
     }
 
-    void ScriptContext::AddToEvalMap(FastEvalMapString const& key, BOOL isIndirect, ScriptFunction *pfuncScript)
+    void ScriptContext::AddToEvalMap(FastEvalMapString & key, BOOL isIndirect, ScriptFunction *pfuncScript)
     {
         Assert(!pfuncScript->GetFunctionInfo()->IsGenerator());
 
@@ -2923,7 +2924,7 @@ ExitTempAllocator:
 #endif
     }
 
-    void ScriptContext::AddToEvalMapHelper(FastEvalMapString const& key, BOOL isIndirect, ScriptFunction *pFuncScript)
+    void ScriptContext::AddToEvalMapHelper(FastEvalMapString & key, BOOL isIndirect, ScriptFunction *pFuncScript)
     {
         EvalCacheDictionary *dict = isIndirect ? this->Cache()->indirectEvalCacheDictionary : this->Cache()->evalCacheDictionary;
         if (dict == nullptr)
@@ -2938,6 +2939,15 @@ ExitTempAllocator:
             {
                 this->Cache()->evalCacheDictionary = dict;
             }
+        }
+
+        if (key.owningVar == nullptr)
+        {
+            // We need to copy buffer because in this case the buffer could have come from the host e.g. through IActiveScriptDirect::Parse
+            JavascriptString* copiedString = JavascriptString::NewCopyBuffer(key.str.GetBuffer(), key.str.GetLength(), this);
+            key.owningVar = copiedString;
+            Assert(key.str.GetLength() == copiedString->GetLength());
+            key.str = JsUtil::CharacterBuffer<char16>(copiedString->GetString(), copiedString->GetLength());
         }
 
         dict->Add(key, pFuncScript);
@@ -3846,21 +3856,6 @@ ExitTempAllocator:
 
         } autoRestore(this->GetThreadContext());
 
-        if (!Js::Configuration::Global.EnableJitInDebugMode())
-        {
-            if (attach)
-            {
-                // Now force nonative, so the job will not be put in jit queue.
-                ForceNoNative();
-            }
-            else
-            {
-                // Take the runtime out of interpreted mode so the JIT
-                // queue can be exercised.
-                this->ForceNative();
-            }
-        }
-
         // Invalidate all the caches.
         this->threadContext->InvalidateAllProtoInlineCaches();
         this->threadContext->InvalidateAllStoreFieldInlineCaches();
@@ -4494,11 +4489,6 @@ ExitTempAllocator:
         if (this->IsScriptContextInSourceRundownOrDebugMode())
         {
             forceNoNative = this->IsInterpreted();
-        }
-        else if (!Js::Configuration::Global.EnableJitInDebugMode())
-        {
-            forceNoNative = true;
-            this->ForceNoNative();
         }
         return forceNoNative;
     }
@@ -5864,6 +5854,7 @@ ScriptContext::GetJitFuncRangeCache()
 
     void ConvertKey(const FastEvalMapString& src, EvalMapString& dest)
     {
+        dest.owningVar = src.owningVar;
         dest.str = src.str;
         dest.strict = src.strict;
         dest.moduleID = src.moduleID;

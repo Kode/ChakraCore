@@ -185,6 +185,7 @@ public:
     virtual HRESULT FetchImportedModuleFromScript(DWORD_PTR dwReferencingSourceContext, LPCOLESTR specifier, Js::ModuleRecordBase** dependentModuleRecord) = 0;
     virtual HRESULT NotifyHostAboutModuleReady(Js::ModuleRecordBase* referencingModule, Js::Var exceptionVar) = 0;
     virtual HRESULT InitializeImportMeta(Js::ModuleRecordBase* referencingModule, Js::Var importMetaObject) = 0;
+    virtual bool ReportModuleCompletion(Js::ModuleRecordBase* module, Js::Var exception) = 0;
 
     virtual HRESULT ThrowIfFailed(HRESULT hr) = 0;
 
@@ -962,7 +963,7 @@ private:
         void EnsureSourceContextInfoMap();
         void EnsureDynamicSourceContextInfoMap();
 
-        void AddToEvalMapHelper(FastEvalMapString const& key, BOOL isIndirect, ScriptFunction *pFuncScript);
+        void AddToEvalMapHelper(FastEvalMapString & key, BOOL isIndirect, ScriptFunction *pFuncScript);
 
         uint moduleSrcInfoCount;
 #ifdef RUNTIME_DATA_COLLECTION
@@ -1113,7 +1114,7 @@ private:
         static const int MaxEvalSourceSize = 400;
 
         bool IsInEvalMap(FastEvalMapString const& key, BOOL isIndirect, ScriptFunction **ppFuncScript);
-        void AddToEvalMap(FastEvalMapString const& key, BOOL isIndirect, ScriptFunction *pFuncScript);
+        void AddToEvalMap(FastEvalMapString & key, BOOL isIndirect, ScriptFunction *pFuncScript);
 
         template <typename TCacheType>
         void CleanDynamicFunctionCache(TCacheType* cacheType);
