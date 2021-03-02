@@ -173,7 +173,7 @@ EXTERN_C BOOL WINAPI DllMain(HINSTANCE hmod, DWORD dwReason, PVOID pvReserved)
     }
 }
 
-#ifdef KORE_WINDOWS
+#ifdef _WIN32
 void ChakraBinaryAutoSystemInfoInit(AutoSystemInfo * autoSystemInfo)
 {
     autoSystemInfo->buildDateHash = JsUtil::CharacterBuffer<char>::StaticGetHashCode(__DATE__, _countof(__DATE__));
