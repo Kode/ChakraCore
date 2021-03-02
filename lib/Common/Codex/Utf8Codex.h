@@ -11,7 +11,7 @@
 // TODO: Abstract out into it's own file
 #include "pal.h"
 #include "inc/rt/palrt.h"
-#ifndef KORE_LINUX
+#ifndef __linux__
 #include <stdint.h>
 #endif
 #endif
